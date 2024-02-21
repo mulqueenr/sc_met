@@ -126,8 +126,12 @@ From: ubuntu:latest
 	mamba install -y -f conda-forge::r-devtools
 	mamba install -y -f --no-deps conda-forge::r-igraph
 	mamba install -y -f --no-deps bioconda::bioconductor-bluster
+	mamba install -y -f --no-deps bioconda::bioconductor-copynumber
 	R --slave -e 'devtools::install_github("navinlabcode/copykit")'
-	R --slave -e 'devtools::install_github("navinlabcode/copykit",dependencies=FALSE)'
+
+
+#wget https://github.com/navinlabcode/copykit/releases/download/v.0.1.2/copykit_0.1.2.tar.gz
+#R --slave -e 'install.packages("copykit_0.1.2.tar.gz", repos = NULL)' # the install_github is broken so pulling from archive
 
 %labels
 	Author Ryan Mulqueen
