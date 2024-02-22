@@ -86,6 +86,7 @@ sudo singularity build --sandbox copykit/ docker://ubuntu:latest
 sudo singularity shell --writable copykit/
 
 ```
+
 copykit.def
 ```bash
 Bootstrap: docker
@@ -96,7 +97,6 @@ From: ubuntu:latest
 	export LC_ALL=C
 	export PATH=/opt/miniconda3/bin:$PATH
 	export PYTHONPATH=/opt/miniconda3/lib/python3.9/:$PYTHONPATH
-
 %post
 	# update and install essential dependencies
 	apt-get -y update
@@ -124,11 +124,11 @@ From: ubuntu:latest
 	#install R packages
 	mamba install -y -f conda-forge::r-base #=4.2
 	mamba install -y -f conda-forge::r-devtools
+	R --slave -e 'devtools::install_github("navinlabcode/copykit")'
 	mamba install -y -f --no-deps conda-forge::r-igraph
 	mamba install -y -f --no-deps bioconda::bioconductor-bluster
 	mamba install -y -f --no-deps bioconda::bioconductor-copynumber
 	R --slave -e 'devtools::install_github("navinlabcode/copykit")'
-
 
 #wget https://github.com/navinlabcode/copykit/releases/download/v.0.1.2/copykit_0.1.2.tar.gz
 #R --slave -e 'install.packages("copykit_0.1.2.tar.gz", repos = NULL)' # the install_github is broken so pulling from archive
@@ -141,10 +141,13 @@ From: ubuntu:latest
 ```
 
 ```bash
-sudo singularity build copykit.sif copykit.def #for some reason building it as a sandbox works, but it doesn't work from a def file. even though I just copy and pasted it.
+sudo singularity build copykit.sif copykit/ #building from sandbox works but doesnt update env variables when first instancing sif
+SINGULARITYENV_PATH="/opt/miniconda3/bin:$PATH" singularity shell copykit
+
+#sudo singularity build copykit.sif copykit.def 
 
 #sudo singularity build copykit.sif copykit.def
-sudo singularity shell copykit.sif
+#sudo singularity shell copykit.sif
 ```
 
 
@@ -301,10 +304,12 @@ Use sftp to get images off cluster. Move to local computer > geo > seadragon2
 
 ```bash
 sftp -i ~/Downloads/newkey2.pem ubuntu@54.187.193.117
-get scmetR.sif
+get copykit.sif
 
-sftp mulqueen@qcprpgeo.mdanderson.edu   
-put scmetR.sif
+sftp mulqueen@qcprpgeo.mdanderson.edu
+cd ./singularity
+
+put copykit.sif
 ```
 
 Now move to seadragon
