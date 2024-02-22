@@ -542,6 +542,21 @@ bsub < 240216_scalebio_scbam_split.lsf
 
 ```
 
+
+
+```bash
+bsub -Is -W 6:00 -q transfer -n 4 -M 10 -R rusage[mem=10] /bin/bash
+
+du -shL /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/cg_sort_cov/
+#13G cg_sort_cov/
+
+rsync -aLPvz \
+/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/cg_sort_cov \
+mulqueen@qcprpgeo.mdanderson.edu:/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2
+```
+
+
+
 ```bash
 bsub -Is -W 6:00 -q interactive -n 10 -M 200 -R rusage[mem=200] /bin/bash
 singularity shell --bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact /rsrch4/home/genetics/rmulqueen/singularity/scmetR.sif
