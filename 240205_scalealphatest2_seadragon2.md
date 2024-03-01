@@ -1,4 +1,4 @@
-## Settiing up the ScaleMethyl Nextflow pipeline to work on a IBM LSF HPC
+## Setting up the ScaleMethyl Nextflow pipeline to work on a IBM LSF HPC
 
 Setting up environment following https://github.com/ScaleBio/ScaleMethyl
 On mdandersons seadragon2.
@@ -389,12 +389,12 @@ Generate the 240205_scalemet.lsf file for bsub submission.
 
 ```bash
 #BSUB -W 240:00
-#BSUB -q e80long
-#BSUB -n 80
+#BSUB -q e40long
+#BSUB -n 40
 #BSUB -M 300
 #BSUB -R rusage[mem=300]
-#BSUB -o /rsrch4/home/genetics/rmulqueen/projects/metact/240205_RMMM_scalebiotest2/bsub.log
-#BSUB -cwd /rsrch4/home/genetics/rmulqueen/projects/metact/240205_RMMM_scalebiotest2
+#BSUB -o /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/bsub.log
+#BSUB -cwd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2
 #BSUB -u RMulqueen@mdanderson.org
 #BSUB -J 240205_RMM_scalebiotest2
 
@@ -404,7 +404,7 @@ module load singularity/3.7.0
 module load glib/2.51.5 #might not need this
 
 #set up directories and variables
-export proj_dir="/rsrch4/home/genetics/rmulqueen/projects/metact"
+export proj_dir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
 export scalebio_nf="${proj_dir}/tools/ScaleMethyl"
 export runDir="${proj_dir}/240205_RMMM_scalebiotest2"
 export fastqDir="${proj_dir}/240205_RMMM_scalebiotest2/PM2517"
@@ -519,6 +519,23 @@ mkdir -p sc_bams
 parallel -j 60 -a cells_pf.txt split_bams
 
 #do CNV calling on split
+
+
+```
+
+```bash
+#BSUB -W 24:00
+#BSUB -q e80medium
+#BSUB -n 80
+#BSUB -M 100
+#BSUB -R rusage[mem=100]
+#BSUB -o /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/bamDeDup/bsub.out
+#BSUB -cwd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/bamDeDup
+#BSUB -u RMulqueen@mdanderson.org
+#BSUB -J 240216_scalebio_scbam_split
+
+export SINGULARITY_TMPDIR=/singularity_tmpdir
+
 
 
 ```

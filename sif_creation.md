@@ -84,8 +84,9 @@ sudo chmod 666 /var/run/docker.sock
 ```bash
 sudo singularity build --sandbox copykit/ docker://ubuntu:latest
 sudo singularity shell --writable copykit/
-
 ```
+
+## Define the copykit image to be created
 
 copykit.def
 ```bash
@@ -97,6 +98,7 @@ From: ubuntu:latest
 	export LC_ALL=C
 	export PATH=/opt/miniconda3/bin:$PATH
 	export PYTHONPATH=/opt/miniconda3/lib/python3.9/:$PYTHONPATH
+	export LC_ALL=C.UTF-8
 %post
 	# update and install essential dependencies
 	apt-get -y update
@@ -120,18 +122,25 @@ From: ubuntu:latest
 	# install dependencies via conda
 	export PATH="/opt/miniconda3/bin:$PATH"
 	conda install -y -c conda-forge mamba 
+	mamba install -y -f bioconda::samtools #
+	mamba install -y -f bioconda::bedtools #
+	mamba install -y -f conda-forge::parallel #
 
 	#install R packages
 	mamba install -y -f conda-forge::r-base #=4.2
 	mamba install -y -f conda-forge::r-devtools
-	R --slave -e 'devtools::install_github("navinlabcode/copykit")'
-	mamba install -y -f --no-deps conda-forge::r-igraph
-	mamba install -y -f --no-deps bioconda::bioconductor-bluster
-	mamba install -y -f --no-deps bioconda::bioconductor-copynumber
-	R --slave -e 'devtools::install_github("navinlabcode/copykit")'
+	#mamba install -y -f bioconda::bioconductor-ensdb.hsapiens.v86
 
-#wget https://github.com/navinlabcode/copykit/releases/download/v.0.1.2/copykit_0.1.2.tar.gz
-#R --slave -e 'install.packages("copykit_0.1.2.tar.gz", repos = NULL)' # the install_github is broken so pulling from archive
+	R --slave -e 'devtools::install_github("navinlabcode/copykit")'
+	conda install -y -f --no-deps conda-forge::r-igraph
+	conda install -y -f --no-deps bioconda::bioconductor-bluster
+	conda install -y -f --no-deps bioconda::bioconductor-copynumber
+	conda install -y -f --no-deps bioconda::bioconductor-ggtree
+	wget https://github.com/navinlabcode/copykit/releases/download/v.0.1.2/copykit_0.1.2.tar.gz
+	R --slave -e 'install.packages("copykit_0.1.2.tar.gz", repos = NULL)' # the install_github is broken so pulling from archive
+
+	R --slave -e 'install.packages("optparse", repos="http://cran.us.r-project.org")' #
+
 
 %labels
 	Author Ryan Mulqueen
@@ -141,8 +150,11 @@ From: ubuntu:latest
 ```
 
 ```bash
-sudo singularity build copykit.sif copykit/ #building from sandbox works but doesnt update env variables when first instancing sif
-SINGULARITYENV_PATH="/opt/miniconda3/bin:$PATH" singularity shell copykit
+sudo singularity build copykit.sif copykit.def
+
+rsync -alPvz \
+/home/ubuntu/copykit.sif \
+mulqueen@qcprpgeo.mdanderson.edu
 
 #sudo singularity build copykit.sif copykit.def 
 
@@ -156,6 +168,8 @@ SINGULARITYENV_PATH="/opt/miniconda3/bin:$PATH" singularity shell copykit
 ```bash
 sudo singularity build --sandbox scmetR/ docker://ubuntu:latest
 sudo singularity shell --writable scmetR/
+
+
 
 #test r installs and stuff (just go line by line of def below)
 
@@ -190,7 +204,6 @@ wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
 bash Miniconda3-latest-Linux-x86_64.sh -b -f -p /opt/miniconda3/
 rm Miniconda3-latest-Linux-x86_64.sh
 
-
 # install dependencies via conda
 export PATH="/opt/miniconda3/bin:$PATH"
 conda config --add channels bioconda
@@ -204,37 +217,22 @@ mamba install -y -f bioconda::bwa #
 mamba install -y -f bioconda::samtools #
 mamba install -y -f bioconda::bedtools #
 mamba install -y -f conda-forge::parallel #
+pip install pybedtools
 
 #install R packages
-mamba install -y -f conda-forge::r-base=4.1.2 #
+mamba install -y -f conda-forge::r-base #
 mamba install -y -f conda-forge::r-devtools #
-R --slave -e 'devtools::install_github("navinlabcode/copykit")'
-
 mamba install -y -f conda-forge::icu
 mamba install -y -f bioconda::bioconductor-biocgenerics 
 mamba install -y -f bioconda::bioconductor-sparsearray
 mamba install -y -f bioconda::bioconductor-s4arrays
 mamba install -y -f conda-forge::r-biocmanager #
-R --slave -e 'BiocManager::install("copynumber")'
-mamba install -y -f bioconda::bioconductor-copynumber
-R --slave -e 'devtools::install_github("navinlabcode/copykit")'
-
-
-mamba install -y -f conda-forge::r-devtools #
-
-
 
 #Funner stuff!
-
-mamba install -y -f bioconda::bioconductor-copynumber
-
 R --slave -e 'install.packages("Seurat", repos="http://cran.us.r-project.org")' #
 R --slave -e 'devtools::install_github("stuart-lab/signac", "develop")' #
 R --slave -e 'remotes::install_github("satijalab/seurat-wrappers")' #
 R --slave -e 'install.packages(c("DescTools", "reshape2", "ggridges", "mice"), repos="http://cran.us.r-project.org")' #
-
-
-
 
 mamba install -y -f conda-forge::r-rlang #
 mamba install -y -f conda-forge::r-ggplot2 #
@@ -257,7 +255,6 @@ R --slave -e 'install.packages("plyr", repos="http://cran.us.r-project.org")' #
 R --slave -e 'install.packages("stringr", repos="http://cran.us.r-project.org")' #
 R --slave -e 'install.packages("tidyverse", repos="http://cran.us.r-project.org")' #
 R --slave -e 'install.packages("RColorBrewer", repos="http://cran.us.r-project.org")' #
-R --slave -e 'install.packages("scquantum", repos="http://cran.us.r-project.org")' #
 
 #Bioconductor packages through conda
 mamba install -y -f bioconda::bioconductor-biocparallel #
@@ -275,17 +272,19 @@ mamba install -y -f bioconda::bioconductor-scran #
 mamba install -y -f bioconda::bioconductor-complexheatmap #
 mamba install -y -f bioconda::bioconductor-biovizbase #
 
+#correct cistopic install and matrix install
+cd #
+wget https://github.com/aertslab/cisTopic/archive/refs/tags/v2.1.0.tar.gz 
+R --slave -e 'install.packages("v2.1.0.tar.gz", repos = NULL)' # the install_github is broken so pulling from archive
 
-	cd #
-	wget https://github.com/aertslab/cisTopic/archive/refs/tags/v2.1.0.tar.gz 
-	R --slave -e 'install.packages("v2.1.0.tar.gz", repos = NULL)' # the install_github is broken so pulling from archive
-
-	#Correct matrix version
-	mamba install -y -f conda-forge::r-matrix=1.6_1 # set this version
-	mamba install -y -f r::r-irlba # set this version
-	R --slave -e 'install.packages("Matrix", type = "source",repos="http://cran.us.r-project.org")' #reinstall from source
-	R --slave -e 'install.packages("irlba", type = "source",repos="http://cran.us.r-project.org")' #reinstall from source
-	R --slave -e 'install.packages("SeuratObject", type = "source",repos="http://cran.us.r-project.org")' #reinstall from source
+#Correct matrix version
+mamba install -y -f conda-forge::r-matrix=1.6_1 # set this version
+mamba install -y -f r::r-irlba # set this version
+R --slave -e 'install.packages("Matrix", type = "source",repos="http://cran.us.r-project.org")' #reinstall from source
+R --slave -e 'install.packages("irlba", type = "source",repos="http://cran.us.r-project.org")' #reinstall from source
+R --slave -e 'install.packages("SeuratObject", type = "source",repos="http://cran.us.r-project.org")' #reinstall from source
+R --slave -e 'tools::package_dependencies("Matrix", which = "LinkingTo", reverse = TRUE)[[1L]]'
+R --slave -e 'install.packages("lme4", type = "source")'
 
 %labels
     Author Ryan Mulqueen
@@ -303,6 +302,7 @@ sudo singularity shell scmetR.sif
 Use sftp to get images off cluster. Move to local computer > geo > seadragon2
 
 ```bash
+
 sftp -i ~/Downloads/newkey2.pem ubuntu@54.187.193.117
 get copykit.sif
 
