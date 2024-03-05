@@ -1,25 +1,31 @@
 library(copykit)
 library(BiocParallel)
-library(EnsDb.Hsapiens.v86)
-register(MulticoreParam(progressbar = T, workers = 60), default = T)
 BiocParallel::bpparam()
 library(optparse)
 
 option_list = list(
   make_option(c("-i", "--input_dir"), type="character", default=NULL, 
-              help="List of single-cell bam files", metavar="character")
+              help="List of single-cell bam files", metavar="character"),
+  make_option(c("-c", "--task_cpus"), type="integer", default=NULL, 
+              help="Integer number of cpus")
 );
 
 opt_parser = OptionParser(option_list=option_list);
 opt = parse_args(opt_parser);
 setwd(opt$input_dir)
+cpu_count=opt$task_cpus
+
+register(MulticoreParam(progressbar = T, workers = cpu_count), default = T)
 
 dat <- runVarbin(".",
     remove_Y = TRUE,
     genome="hg38",
     is_paired_end=TRUE)
 
-dat$cell_line<-unlist(lapply(strsplit(dat$samples,"[.]"),"[[",1))
+
+dat$cell_line<-unlist(lapply(strsplit(dat$sample,"[.]"),"[[",1))
+dat$well<-unlist(lapply(strsplit(dat$sample,"[.]"),"[[",2))
+dat$idx<-unlist(lapply(strsplit(dat$sample,"[.]"),"[[",3))
 
 # Mark euploid cells if they exist
 dat <- findAneuploidCells(dat)

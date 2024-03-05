@@ -433,7 +433,6 @@ nextflow run ${scalebio_nf} \
 -w ${SCRATCH}/work \
 -resume
 
-#make sure to use scratch for work, has 15TB
 ```
 
 ## Submit job.
@@ -464,6 +463,54 @@ Resource usage summary:
 The output (if any) is above this job summary.
 
  -->
+
+
+
+## Custom Nextflow pipeline for downstream analysis
+240205_scalemet_postprocessing.lsf
+```bash
+#BSUB -W 240:00
+#BSUB -q e40long
+#BSUB -n 40
+#BSUB -M 300
+#BSUB -R rusage[mem=300]
+#BSUB -o /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/bsub_postprocessing.log
+#BSUB -cwd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2
+#BSUB -u RMulqueen@mdanderson.org
+#BSUB -J 240205_RMM_scalebiotest2
+
+#load modules
+module load nextflow/23.04.3
+
+#set up environment variables 
+export SCRATCH="/rsrch4/scratch/genetics/rmulqueen"
+export projDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
+export srcDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src"
+export refDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref"
+export sif="${srcDir}/copykit.sif"
+
+#call nextflow
+nextflow ${srcDir}/singlecell_met_nf.groovy \
+--refdir $refDir \
+-with-singularity $sif \
+-w ${SCRATCH}/met_work \
+--scalemethylout ${projDir}/240205_RMMM_scalebiotest2 \
+-resume
+
+```
+
+```bash
+cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2
+rm -rf bsub_postprocessing.log
+bsub < 240205_scalemet_postprocessing.lsf
+```
+
+
+
+
+
+
+
 
 
  ## Move to directory with larger storage

@@ -1,17 +1,11 @@
-// Declare syntax version
-//https://github.com/danrlu/Nextflow_cheatsheet/blob/main/nextflow_cheatsheet.pdf
-//Runs entirely in singularity container
-
 nextflow.enable.dsl=2
 // Script parameters
-
 // Input parameters, user specified defaults
 params.scalemethylout = "/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2"
 params.readcountfilter = 100000
 
 // Reference files
 params.projectdir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
-params.refdir="${params.projectdir}/ref"
 params.genes_bed="${params.refdir}/grch38/filteredGTF/GRCh38_transcriptsOnly.gtf"
 params.genome_length="${params.refdir}/grch38/genome.txt"
 params.src_dir="${params.projectdir}/src/"
@@ -23,7 +17,7 @@ log.info """
 		================================================
 		ScaleMethyl Pipeline Output : ${params.scalemethylout}
 		Cell Readcount Filter : ${params.readcountfilter}
-		NF Working Dir : ${workflow.launchDir}
+		NF Working Dir : ${workflow.workDir}
 		Src directory : ${params.src_dir}
 		Out directory : ${params.out_dir}
 		================================================
@@ -31,50 +25,48 @@ log.info """
 """.stripIndent()
 
 // CNV BLOCK //
-process COUNT_PER_GROUPEDBAM { 
+process SPLIT_GROUPED_BAM { 
 	// Generate a count per grouped bam and pass list.
+	maxForks 10
+	cpus 5
 	input:
 		path bams
 	output:
-		path("*.readcount.tsv")
+		path("*.sorted.bam"), optional: true
 	script:
 	"""
 	bam_name="${bams}"
-	cellline=\$(echo \$bam_name | cut -d \'.\' -f 1 )
-	well=\$(echo \$bam_name | cut -d \'.\' -f 2 )
-	samtools view ${bams} \\
-	| awk -v b=\$1 \'{split(\$1,a,\":\"); print a[1],b}\' \\
+	export cellline=\$(echo \$bam_name | cut -d \'.\' -f 1 )
+	export well=\$(echo \$bam_name | cut -d \'.\' -f 2 )
+	samtools view -@ ${task.cpus} ${bams} \\
+	| awk -v b=${bams} \'{split(\$1,a,\":\"); print a[1],b}\' \\
 	| sort \\
 	| uniq -c \\
 	| sort -k1,1n \\
 	| awk \'\$1>${params.readcountfilter} {print \$0}\' > \${cellline}.\${well}.readcount.tsv
-        """
-}
 
-process SPLIT_GROUPED_BAM { 
-	//Generate single-cell bams from those that pass filter
-	input:
-		path readcount
-	output:
-		path("*sorted.bam")
-	script:
-	"""
-	test=${readcount}
+
+	split_bam() {
+	test=\$1
 	idx=\$(echo \$test | cut -d \' \' -f 2 )
 	outidx=\$(echo \$idx | sed -e \'s/+/_/g\' -)
 	bam=\$(echo \$test | cut -d \' \' -f 3)
-	outprefix=\$(echo \$bam | cut -d \'/\' -f 2)
 
-	((samtools view -H \$bam) && (samtools view \$bam | awk -v i=\$idx \'{split(\$1,a,\":\"); if(a[1]==i); print \$0}\')) \\
+	((samtools view -H \$bam) && (samtools view \$bam | awk -v i=\$idx \'{split(\$1,a,\":\"); if(a[1]==i) print \$0}\')) \\
 	| samtools view -bS - \\
-	| samtools sort -T . -O BAM -o \${outprefix}.\${outidx}.sorted.bam -
-
-	"""
+	| samtools sort -T . -O BAM -o \${cellline}.\${well}.\${outidx}.sorted.bam - 
+	}
+    
+    export -f split_bam
+	parallel -j ${task.cpus} -a \${cellline}.\${well}.readcount.tsv split_bam 
+    """
 }
 
 process RUN_COPYKIT {
 	//Run Copykit on single-cell bams
 	publishDir "${params.scalemethylout}/postprocessing", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	cpus 10
 
 	input:
 		path sc_bam_path
@@ -82,8 +74,9 @@ process RUN_COPYKIT {
 		path("*.{rds,pdf}")
 	script:
 	"""
-	Rscript ${params.projectdir}/src/copykit_run.R \\
-	-i "."
+	Rscript /src/copykit_run.R \\
+	-i "." \\
+	-c ${task.cpus}
 	"""
 }
 
@@ -139,26 +132,29 @@ process MAKE_100KB_BED {
 process SUMMARIZE_CG_OVER_BEDFEATURES {
 	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
-	//Output data frames of 1. coverage 2. methylation rate 3. posterior estimate (epiclomal)
-	//requires from pybedtools import BedTool
-	//requires import multiprocessing
-	//requires import pandas as pd
-	//requires import numpy as np
-	//requires import os, glob
-	//requires import scipy.io, scipy.sparse
-	//requires import numpy as np
-	//requires import argparse, pathlib
 	input:
 		path cov_folder
 		path feat
 	output:
-		path("*tsv.gz")
+		path("*{column_names,total_count,mc_count,mc_posteriorest}.tsv.gz")
 	script:
 	"""
 	python /src/mc_cov_feature_summary.py --features ${feat} --cov_folder ${cov_folder}
 	"""
 }
 
+process MERGE_CG_FEATURE_DATAFRAMES {
+	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	input:
+		path summary_tsvs
+	output:
+		path("*{column_names,total_count,mc_count,mc_posteriorest}.tsv.gz")
+	script:
+	"""
+	python /src/mc_cov_feature_summary.py --features ${feat} --cov_folder ${cov_folder}
+	"""
+}
 //process MAKE_METHYLATION_SEURAT_OBJ {
 	//Make two assays, 100kb for clustering, and gene met for identification
 	//Perform dim reduction
@@ -168,10 +164,8 @@ process SUMMARIZE_CG_OVER_BEDFEATURES {
 workflow {
 	/* RUN CNV PROFILING ON CNVS */	
 		def bams = Channel.fromPath("${params.scalemethylout}/bamDeDup/*/*bam")
-		bams.view()
 
-		scbam_dir= COUNT_PER_GROUPEDBAM(bams) \
-		| SPLIT_GROUPED_BAM \
+		scbam_dir= SPLIT_GROUPED_BAM(bams) \
 		| collect
 
 		RUN_COPYKIT(scbam_dir)
@@ -181,10 +175,12 @@ workflow {
 	/* GENERATE CLUSTERS AND GENE SUMMARY WINDOWS FOR CELL TYPE ANALYSIS */
 		def covs = Channel.fromPath("${params.scalemethylout}/cg_sort_cov/**/**")
 
-		gene_bed = MAKE_TRANSCRIPT_BED(${params.genes_bed})
-		100kb_bed = MAKE_100KB_BED(${params.genome_length})
+		//gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
+		//hundokb_bed = MAKE_100KB_BED("${params.genome_length}")
 		//tf_bed = MAKE_TF_BED
 
+		//SUMMARIZE_CG_OVER_BEDFEATURES(covs,gene_bed)
+		//SUMMARIZE_CG_OVER_BEDFEATURES(covs,hundokb_bed)
 
 		//#grab bed.gz, subset window bed to just that chr, make window x cell matrix, merge window x cell matrix column wise (add other cells), merge window x cell matrix row wise (add subset window beds), save it as a mtx file format
 
@@ -219,9 +215,12 @@ nextflow ${srcDir}/singlecell_met_nf.groovy \
 -resume
 
 
-
-cd /rsrch4/scratch/genetics/rmulqueen/met_work/72/390e90fff9625c529aa3d993044841
-singularity shell --bind /rsrch4/scratch/genetics/rmulqueen/met_work --bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2 $sif
+cd /rsrch4/scratch/genetics/rmulqueen/met_work/43/c92414ce3d9a31b8b4ff5d7d9e914f
+singularity shell \
+--bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src:/src/ \
+--bind /rsrch4/scratch/genetics/rmulqueen/met_work \
+--bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2 \
+$sif
 */
 
 

@@ -74,7 +74,10 @@ cov_out = pd.concat(cov_chr,axis=1).transpose().sort_index()
 sample_name = args.cov_folder.split("/")[-1].split(".")[0]+"_"+args.cov_folder.split("/")[-1].split(".")[1]+"_"
 cov_out.columns =[sample_name+x for x in cov_out.columns]
 cov_out = cov_out.replace({np.nan : 0})  # NaN with 0 since for coverage that is the same thing
-cov_out.to_csv(sample_name+args.feat_name+".total_count.tsv.gz",sep="\t",header=True,index=True,compression="gzip")
+#output with cells as rows and consistent column names, such that everything can be concatenated together
+cov_out = pd.DataFrame(cov_out).transpose()
+cov_out.to_csv(sample_name+args.feat_name+".total_count.tsv.gz",sep="\t",header=False,index=True,compression="gzip")
+cov_out.columns.to_csv(args.feat_name+".column_names.tsv.gz",,sep="\t",,header=True,index=True,compression="gzip")
 """					"""
 
 """	METHYLATION CG COVERAGE MATRIX
@@ -83,7 +86,8 @@ mc_chr = [cov_per_chrom(cov,args.feat,mc_cov_only=True) for cov in glob.glob(os.
 mc_out = pd.concat(mc_chr,axis=1).transpose().sort_index()
 sample_name = args.cov_folder.split("/")[-1].split(".")[0]+"_"+args.cov_folder.split("/")[-1].split(".")[1]+"_"
 mc_out.columns =[sample_name+x for x in mc_out.columns]
-mc_out.to_csv(sample_name+args.feat_name+".mc_count.tsv.gz",sep="\t",header=True,index=True,compression="gzip")
+mc_out = pd.DataFrame(mc_out).transpose()
+mc_out.to_csv(sample_name+args.feat_name+".mc_count.tsv.gz",sep="\t",header=False,index=True,compression="gzip")
 """				"""
 
 
@@ -95,7 +99,7 @@ if __name__ == '__main__':
 	with multiprocessing.Pool(processes=96) as pool:
 		out=pool.starmap(posterior_mcrate_estimate,args)
 df_posterior = pd.DataFrame(out).transpose()
-df_posterior.to_csv(sample_name+args.feat_name+".mc_posteriorest.tsv.gz",sep="\t",header=True,index=True,compression="gzip")
+df_posterior.to_csv(sample_name+args.feat_name+".mc_posteriorest.tsv.gz",sep="\t",header=False,index=True,compression="gzip")
 
 
 #cd /volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_sort_cov
