@@ -183,14 +183,15 @@ workflow {
 
 
 	/* GENERATE CLUSTERS AND GENE SUMMARY WINDOWS FOR CELL TYPE ANALYSIS */
-		def covs = Channel.fromPath("${params.scalemethylout}/cg_sort_cov/**/**")
+		def covs = Channel.fromPath("${params.scalemethylout}/cg_sort_cov/**")
+		covs.view()
 
 		//gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
 		hundokb_bed = MAKE_100KB_BED("${params.genome_length}")
 		//tf_bed = MAKE_TF_BED
 
 		//SUMMARIZE_CG_OVER_BEDFEATURES(covs,gene_bed)
-		SUMMARIZE_CG_OVER_BEDFEATURES(covs,hundokb_bed)
+		//SUMMARIZE_CG_OVER_BEDFEATURES(covs,hundokb_bed)
 
 		//#grab bed.gz, subset window bed to just that chr, make window x cell matrix, merge window x cell matrix column wise (add other cells), merge window x cell matrix row wise (add subset window beds), save it as a mtx file format
 
@@ -211,6 +212,7 @@ export SCRATCH="/rsrch4/scratch/genetics/rmulqueen"
 export projDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
 export srcDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src"
 export sif="${srcDir}/copykit.sif"
+export refDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref"
 
 #set up nextflow variables 
 #export APPTAINER_BIND="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
