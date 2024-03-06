@@ -77,7 +77,7 @@ cov_out = cov_out.replace({np.nan : 0})  # NaN with 0 since for coverage that is
 #output with cells as rows and consistent column names, such that everything can be concatenated together
 cov_out = pd.DataFrame(cov_out).transpose()
 cov_out.to_csv(sample_name+args.feat_name+".total_count.tsv.gz",sep="\t",header=False,index=True,compression="gzip")
-cov_out.columns.to_csv(args.feat_name+".column_names.tsv.gz",,sep="\t",,header=True,index=True,compression="gzip")
+cov_out.columns.to_csv(args.feat_name+".column_names.tsv.gz",sep="\t",header=True,index=True,compression="gzip")
 """					"""
 
 """	METHYLATION CG COVERAGE MATRIX

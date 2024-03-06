@@ -29,6 +29,8 @@ process SPLIT_GROUPED_BAM {
 	// Generate a count per grouped bam and pass list.
 	maxForks 10
 	cpus 5
+	label 'cnv'
+
 	input:
 		path bams
 	output:
@@ -67,6 +69,7 @@ process RUN_COPYKIT {
 	publishDir "${params.scalemethylout}/postprocessing", mode: 'copy', overwrite: true
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
 	cpus 10
+	label 'cnv'
 
 	input:
 		path sc_bam_path
@@ -80,14 +83,13 @@ process RUN_COPYKIT {
 	"""
 }
 
-
-//process RUN_RIDDLER
-
 // CELL CLUSTERING AND TYPING BLOCK //
 process MAKE_TRANSCRIPT_BED {
 	//Generate transcript bed from ScaleMethyl GTF file, filter to unique transcripts and the longest one.
 	//requires bedtools and parallel
 	cpus 10
+	label 'cnv'
+
 	input:
 		path ref
 	output:
@@ -113,6 +115,8 @@ process MAKE_100KB_BED {
 	//Generate transcript bed from ScaleMethyl genome.txt file
 	//Add Blacklist filter??
 	//requires bedtools
+	label 'cnv'
+
 	input:
 		path ref
 	output:
@@ -132,6 +136,8 @@ process MAKE_100KB_BED {
 process SUMMARIZE_CG_OVER_BEDFEATURES {
 	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
 	input:
 		path cov_folder
 		path feat
@@ -146,13 +152,18 @@ process SUMMARIZE_CG_OVER_BEDFEATURES {
 process MERGE_CG_FEATURE_DATAFRAMES {
 	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
 	input:
 		path summary_tsvs
 	output:
 		path("*{column_names,total_count,mc_count,mc_posteriorest}.tsv.gz")
 	script:
 	"""
-	python /src/mc_cov_feature_summary.py --features ${feat} --cov_folder ${cov_folder}
+	python /src/mc_cov_feature_summary.py \\
+	--features ${feat} \\
+	--feat_name 100kb \\
+	--cov_folder ${cov_folder}
 	"""
 }
 //process MAKE_METHYLATION_SEURAT_OBJ {
@@ -169,18 +180,17 @@ workflow {
 		| collect
 
 		RUN_COPYKIT(scbam_dir)
-		//RIDDLER_ON_SPLIT_BAMS(scbam_dir)
 
 
 	/* GENERATE CLUSTERS AND GENE SUMMARY WINDOWS FOR CELL TYPE ANALYSIS */
 		def covs = Channel.fromPath("${params.scalemethylout}/cg_sort_cov/**/**")
 
 		//gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
-		//hundokb_bed = MAKE_100KB_BED("${params.genome_length}")
+		hundokb_bed = MAKE_100KB_BED("${params.genome_length}")
 		//tf_bed = MAKE_TF_BED
 
 		//SUMMARIZE_CG_OVER_BEDFEATURES(covs,gene_bed)
-		//SUMMARIZE_CG_OVER_BEDFEATURES(covs,hundokb_bed)
+		SUMMARIZE_CG_OVER_BEDFEATURES(covs,hundokb_bed)
 
 		//#grab bed.gz, subset window bed to just that chr, make window x cell matrix, merge window x cell matrix column wise (add other cells), merge window x cell matrix row wise (add subset window beds), save it as a mtx file format
 
@@ -228,6 +238,9 @@ $sif
 /*
 
 
+ADD OVERDISPERSION
+MAD SCORE
+BREADTH OF COVERAGE
 
 -make riddler container
 -make epiclomal container

@@ -212,12 +212,12 @@ conda install -y -c conda-forge mamba # general dependencies
 
 #mamba installs
 mamba install -y -f pip #
+pip install pybedtools
 mamba install -y -f numpy #
 mamba install -y -f bioconda::bwa #
 mamba install -y -f bioconda::samtools #
 mamba install -y -f bioconda::bedtools #
 mamba install -y -f conda-forge::parallel #
-pip install pybedtools
 
 #install R packages
 mamba install -y -f conda-forge::r-base #
@@ -283,8 +283,7 @@ mamba install -y -f r::r-irlba # set this version
 R --slave -e 'install.packages("Matrix", type = "source",repos="http://cran.us.r-project.org")' #reinstall from source
 R --slave -e 'install.packages("irlba", type = "source",repos="http://cran.us.r-project.org")' #reinstall from source
 R --slave -e 'install.packages("SeuratObject", type = "source",repos="http://cran.us.r-project.org")' #reinstall from source
-R --slave -e 'tools::package_dependencies("Matrix", which = "LinkingTo", reverse = TRUE)[[1L]]'
-R --slave -e 'install.packages("lme4", type = "source")'
+R --slave -e 'tools::package_dependencies("Matrix", which = "LinkingTo", reverse = TRUE)[[1L]];install.packages("lme4", type = "source",repos = "http://cran.us.r-project.org")'
 
 %labels
     Author Ryan Mulqueen

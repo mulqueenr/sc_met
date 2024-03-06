@@ -502,7 +502,11 @@ nextflow ${srcDir}/singlecell_met_nf.groovy \
 ```bash
 cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2
 rm -rf bsub_postprocessing.log
-bsub < 240205_scalemet_postprocessing.lsf
+bsub < /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/240205_scalemet_postprocessing.lsf
+cat /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/bsub_postprocessing.log
+
+cat /rsrch4/scratch/genetics/rmulqueen/met_work/34/3d1b9f1c92717189742e435a09da6d/.command.log 
+
 ```
 
 
