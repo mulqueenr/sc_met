@@ -83,7 +83,8 @@ def posterior_mcrate_estimate(cov_out,mc_out,cellid):
 
 """ TOTAL COVERAGE MATRIX 
 All CGs measured that overlap per feature """
-cov_chr = [cov_per_chrom(cov,args.feat,mc_cov_only=False) for cov in glob.glob(os.path.join("./"+args.cov_folder,"chr*bed.gz"))]
+#adding filter to remove Y chr
+cov_chr = [cov_per_chrom(cov,args.feat,mc_cov_only=False) for cov in glob.glob(os.path.join("./"+args.cov_folder,"chr*bed.gz")) if "chrY" not in cov ]
 cov_out = pd.concat(cov_chr,axis=1).transpose().sort_index()
 sample_name = args.cov_folder.split("/")[-1].split(".")[0]+"_"+args.cov_folder.split("/")[-1].split(".")[1]
 cov_out.columns =[sample_name+x for x in cov_out.columns]
@@ -95,7 +96,7 @@ cov_out.to_csv(sample_name+"."+args.feat_name+".total_count.tsv.gz",sep="\t",hea
 
 """	METHYLATION CG COVERAGE MATRIX
 Z/(z+Z) that overlap per  feature, NaN if < min_count_for_rate """
-mc_chr = [cov_per_chrom(cov,args.feat,mc_cov_only=True) for cov in glob.glob(os.path.join(args.cov_folder,"chr*bed.gz"))]
+mc_chr = [cov_per_chrom(cov,args.feat,mc_cov_only=True) for cov in glob.glob(os.path.join(args.cov_folder,"chr*bed.gz")) if "chrY" not in cov ]
 mc_out = pd.concat(mc_chr,axis=1).transpose().sort_index()
 sample_name = args.cov_folder.split("/")[-1].split(".")[0]+"_"+args.cov_folder.split("/")[-1].split(".")[1]
 mc_out.columns =[sample_name+x for x in mc_out.columns]
@@ -112,6 +113,7 @@ if __name__ == '__main__':
 	# generate met coverage pandas df
 	with multiprocessing.Pool(processes=1) as pool:
 		out=pool.starmap(posterior_mcrate_estimate,args)
+
 df_posterior = pd.DataFrame(out).transpose()
 df_posterior.to_csv(sample_name+"."+feat_name+".mc_posteriorest.tsv.gz",sep="\t",header=True,index=True,compression="gzip")
 

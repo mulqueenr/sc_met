@@ -230,7 +230,7 @@ nextflow ${srcDir}/singlecell_met_nf.groovy \
 --scalemethylout ${projDir}/240205_RMMM_scalebiotest2 \
 -resume
 
-cd /rsrch4/scratch/genetics/rmulqueen/met_work/af/f238e8a3d2a2ee895b9adfc17eea9f
+cd /rsrch4/scratch/genetics/rmulqueen/met_work/c4/2ef5236657a57879d9e2c811c4b7aa
 export sif="${srcDir}/scmetR.sif"
 
 singularity shell \
@@ -255,7 +255,6 @@ BREADTH OF COVERAGE
 
 -make riddler container
 -make epiclomal container
--make met seurat container
 
 
 https://github.com/yardimcilab/RIDDLER for CNV calls??
