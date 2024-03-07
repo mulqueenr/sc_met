@@ -106,7 +106,7 @@ process MAKE_TRANSCRIPT_BED {
 
 	export -f select_longest
 
-	parallel -j ${task.cpus} select_longest ::: \$(awk \'{print \$5}\' GRCh38_transcripts.bed | uniq) > GRCh38_transcripts.longest.bed
+	parallel -j ${task.cpus} select_longest ::: \$(awk \'OFS =\"\\t\" {print \$5}\' GRCh38_transcripts.bed | uniq) |  awk \'OFS=\"\\t\" {print \$1,\$2,\$3,\$4}\' > GRCh38_transcripts.longest.bed
 
 	"""
 }
@@ -133,7 +133,7 @@ process MAKE_100KB_BED {
 
 
 //process MAKE_TF_MOTIF_BED {}
-process SUMMARIZE_CG_OVER_BEDFEATURES {
+process SUMMARIZE_CG_OVER_BED_100KB {
 	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
 	label 'celltype'
@@ -142,31 +142,39 @@ process SUMMARIZE_CG_OVER_BEDFEATURES {
 		path cov_folder
 		path feat
 	output:
-		path("*{column_names,total_count,mc_count,mc_posteriorest}.tsv.gz")
-	script:
-	"""
-	python /src/mc_cov_feature_summary.py --features ${feat} --cov_folder ${cov_folder}
-	"""
-}
-
-process MERGE_CG_FEATURE_DATAFRAMES {
-	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
-	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
-	label 'celltype'
-
-	input:
-		path summary_tsvs
-	output:
-		path("*{column_names,total_count,mc_count,mc_posteriorest}.tsv.gz")
+		tuple path("*total_count.tsv.gz"), path("*mc_count.tsv.gz"), path("*mc_posteriorest.tsv.gz")
 	script:
 	"""
 	python /src/mc_cov_feature_summary.py \\
 	--features ${feat} \\
 	--feat_name 100kb \\
-	--cov_folder ${cov_folder}
+	--cov_folder ${cov_folder} # --cpus 5
+	"""
+}
+
+
+//process MAKE_TF_MOTIF_BED {}
+process SUMMARIZE_CG_OVER_BED_GENES {
+	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
+	input:
+		path cov_folder
+		path feat
+	output:
+		tuple path("*total_count.tsv.gz"), path("*mc_count.tsv.gz"), path("*mc_posteriorest.tsv.gz")
+	script:
+	"""
+	python /src/mc_cov_feature_summary.py \\
+	--features ${feat} \\
+	--feat_name genebody \\
+	--cov_folder ${cov_folder} #--cpus 5
 	"""
 }
 //process MAKE_METHYLATION_SEURAT_OBJ {
+	//awk FNR!=1 f* > result
+
 	//Make two assays, 100kb for clustering, and gene met for identification
 	//Perform dim reduction
 	//Perform label transfer with RNA object????
@@ -183,15 +191,15 @@ workflow {
 
 
 	/* GENERATE CLUSTERS AND GENE SUMMARY WINDOWS FOR CELL TYPE ANALYSIS */
-		def covs = Channel.fromPath("${params.scalemethylout}/cg_sort_cov/**")
-		covs.view()
+		def covs = Channel.fromPath("${params.scalemethylout}/cg_sort_cov/*/*chroms.sort/", type: 'dir')
+		//covs.view()
 
-		//gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
+		gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
 		hundokb_bed = MAKE_100KB_BED("${params.genome_length}")
 		//tf_bed = MAKE_TF_BED
 
-		//SUMMARIZE_CG_OVER_BEDFEATURES(covs,gene_bed)
-		//SUMMARIZE_CG_OVER_BEDFEATURES(covs,hundokb_bed)
+		hundokb_out = SUMMARIZE_CG_OVER_BED_100KB(covs,hundokb_bed)
+		genebody_out = SUMMARIZE_CG_OVER_BED_GENES(covs,gene_bed)
 
 		//#grab bed.gz, subset window bed to just that chr, make window x cell matrix, merge window x cell matrix column wise (add other cells), merge window x cell matrix row wise (add subset window beds), save it as a mtx file format
 
@@ -211,28 +219,29 @@ module load singularity
 export SCRATCH="/rsrch4/scratch/genetics/rmulqueen"
 export projDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
 export srcDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src"
-export sif="${srcDir}/copykit.sif"
 export refDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref"
+export sif="${srcDir}/copykit.sif"
 
-#set up nextflow variables 
-#export APPTAINER_BIND="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
-#export APPTAINER_BINDPATH="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
-cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2
-
+#call nextflow
 nextflow ${srcDir}/singlecell_met_nf.groovy \
---refdir $refdir \
+--refdir $refDir \
 -with-singularity $sif \
 -w ${SCRATCH}/met_work \
 --scalemethylout ${projDir}/240205_RMMM_scalebiotest2 \
 -resume
 
+cd /rsrch4/scratch/genetics/rmulqueen/met_work/af/f238e8a3d2a2ee895b9adfc17eea9f
+export sif="${srcDir}/scmetR.sif"
 
-cd /rsrch4/scratch/genetics/rmulqueen/met_work/43/c92414ce3d9a31b8b4ff5d7d9e914f
 singularity shell \
 --bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src:/src/ \
 --bind /rsrch4/scratch/genetics/rmulqueen/met_work \
 --bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2 \
+--bind /rsrch4/scratch/genetics/rmulqueen/work \
 $sif
+
+
+
 */
 
 
