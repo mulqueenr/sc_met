@@ -134,19 +134,19 @@ process MAKE_100KB_BED {
 
 //process MAKE_TF_MOTIF_BED {}
 process SUMMARIZE_CG_OVER_BED_100KB {
-	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
+	//publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
 	label 'celltype'
 
 	input:
 		path cov_folder
-		path feat
+		path hundokb_bed
 	output:
-		tuple path("*total_count.tsv.gz"), path("*mc_count.tsv.gz"), path("*mc_posteriorest.tsv.gz")
+		path("*.tsv.gz")
 	script:
 	"""
 	python /src/mc_cov_feature_summary.py \\
-	--features ${feat} \\
+	--features ${hundokb_bed} \\
 	--feat_name 100kb \\
 	--cov_folder ${cov_folder} # --cpus 5
 	"""
@@ -155,53 +155,162 @@ process SUMMARIZE_CG_OVER_BED_100KB {
 
 //process MAKE_TF_MOTIF_BED {}
 process SUMMARIZE_CG_OVER_BED_GENES {
-	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
+	//publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
 	label 'celltype'
 
 	input:
 		path cov_folder
-		path feat
+		path gene_bed
 	output:
-		tuple path("*total_count.tsv.gz"), path("*mc_count.tsv.gz"), path("*mc_posteriorest.tsv.gz")
+		path("*.tsv.gz")
 	script:
 	"""
 	python /src/mc_cov_feature_summary.py \\
-	--features ${feat} \\
+	--features ${gene_bed} \\
 	--feat_name genebody \\
 	--cov_folder ${cov_folder} #--cpus 5
 	"""
 }
-//process MAKE_METHYLATION_SEURAT_OBJ {
-	//awk FNR!=1 f* > result
 
-	//Make two assays, 100kb for clustering, and gene met for identification
+process MERGED_100KB_SUMMARIES {
+	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
+	input:
+		path cg_summaries
+	output:
+		path("*.tsv.gz")
+	script:
+	"""
+	#concatenate total count
+	set -- *100kb.total_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > total_count.100kb.merged.tsv.gz
+
+	#concatentate mc count
+	set -- *100kb.mc_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_count.100kb.merged.tsv.gz
+
+	#concatenate rate estimates
+	set -- *100kb.mc_posteriorest.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_posteriorest.100kb.merged.tsv.gz
+	"""
+}	
+
+
+process MERGED_GENE_SUMMARIES {
+	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
+	input:
+		path cg_summaries
+	output:
+		tuple path("total_count.genebody.merged.tsv.gz"), path("mc_count.genebody.merged.tsv.gz"), path("mc_posteriorest.genebody.merged.tsv.gz")
+	script:
+	"""
+	#concatenate total count
+	set -- *genebody.total_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > total_count.genebody.merged.tsv.gz
+
+	#concatentate mc count
+	set -- *genebody.mc_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_count.genebody.merged.tsv.gz
+
+	#concatenate rate estimates
+	set -- *genebody.mc_posteriorest.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_posteriorest.genebody.merged.tsv.gz
+	"""
+}	
+
+
+///USE BC_MULTIOME.SIF TEMPORARILY FOR THIS
+process MAKE_FINAL_SEURATOBJ {
+	publishDir "${params.scalemethylout}/seurat_out", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype_seurat'
+
+	input:
+		tuple path(hundokb_total),path(hundokb_mc),path(hundokb_rate)
+		tuple path(genebody_total),path(genebody_mc),path(genebody_rate)
+		path(meta)
+	output:
+		path("met.SeuratObject.rds")
+	script:
+	"""
+	Rscript /src/seurat_setup.R
+	"""
+}	
 	//Perform dim reduction
 	//Perform label transfer with RNA object????
 //}
 
 workflow {
 	/* RUN CNV PROFILING ON CNVS */	
-		def bams = Channel.fromPath("${params.scalemethylout}/bamDeDup/*/*bam")
+		def bams = 
+		Channel.fromPath("${params.scalemethylout}/bamDeDup/*/*bam")
 
-		scbam_dir= SPLIT_GROUPED_BAM(bams) \
+		scbam_dir = 
+		SPLIT_GROUPED_BAM(bams) \
 		| collect
 
 		RUN_COPYKIT(scbam_dir)
 
 
 	/* GENERATE CLUSTERS AND GENE SUMMARY WINDOWS FOR CELL TYPE ANALYSIS */
-		def covs = Channel.fromPath("${params.scalemethylout}/cg_sort_cov/*/*chroms.sort/", type: 'dir')
-		//covs.view()
+		def covs = 
+		Channel.fromPath("${params.scalemethylout}/cg_sort_cov/*/*chroms.sort/", type: 'dir')
+
+		def meta_data = 
+		Channel.fromPath("${params.scalemethylout}/report/*/csv/*.passingCellsMapMethylStats.csv")
+		met_in = meta_data | collect
+
+		hundokb_bed = MAKE_100KB_BED("${params.genome_length}")
+		hundokb_out =
+		SUMMARIZE_CG_OVER_BED_100KB(covs, hundokb_bed) \
+		| collect \
+		| MERGED_100KB_SUMMARIES
 
 		gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
-		hundokb_bed = MAKE_100KB_BED("${params.genome_length}")
+		genebody_out = 
+		SUMMARIZE_CG_OVER_BED_GENES(covs, gene_bed) \
+		| collect \
+		| MERGED_GENE_SUMMARIES
+
+		MAKE_FINAL_SEURATOBJ(hundokb_out,genebody_out,met_in)
+
 		//tf_bed = MAKE_TF_BED
-
-		hundokb_out = SUMMARIZE_CG_OVER_BED_100KB(covs,hundokb_bed)
-		genebody_out = SUMMARIZE_CG_OVER_BED_GENES(covs,gene_bed)
-
-		//#grab bed.gz, subset window bed to just that chr, make window x cell matrix, merge window x cell matrix column wise (add other cells), merge window x cell matrix row wise (add subset window beds), save it as a mtx file format
 
 }
 
@@ -253,11 +362,9 @@ ADD OVERDISPERSION
 MAD SCORE
 BREADTH OF COVERAGE
 
--make riddler container
 -make epiclomal container
 
 
-https://github.com/yardimcilab/RIDDLER for CNV calls??
 
 
 https://github.com/molonc/Epiclomal
