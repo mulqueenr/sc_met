@@ -125,9 +125,8 @@ count_scbam() {
 	samtools view $1 | awk '{split($1,a,":");print a[1]}' | sort -T . | uniq -c | awk -v var="$1" 'OFS="\t" {print $1,$2,var}'
 }
 export -f count_scbam
-cd $runDir/
-bam_in=$(find -L -iname "*dedup.nsrt.bam")
-parallel --jobs 30 count_scbam ::: $bam_in | sort -k1,1n > cell_readcounts.tsv
+bam_in=$(find -L -iname "*.bam")
+parallel --jobs 50 count_scbam ::: $bam_in | sort -k1,1n > cell_readcounts.tsv
 parallel --jobs 30 count_scbam ::: $bam_in | sort -k1,1n | awk '{if($1>=10000) print $0}' > cell_id.pf.tsv
 ```
 ```bash
@@ -361,3 +360,21 @@ Submit job
 bsub -Is -W 36:00 -q long -n 10 -M 200 -R rusage[mem=200] scalemethyl_pipeline.sh
 ```
 
+```bash
+count_scbam() {
+	echo "$1\t$(samtools view $1 | wc -l)"
+}
+export -f count_scbam
+bam_in=$(find -iname "*.bam")
+parallel --jobs 50 count_scbam ::: $bam_in | sort -k1,1n > cell_readcounts.tsv
+
+
+
+gzip_small_bams() {
+	gzip $1
+}
+export -f gzip_small_bams
+ls -lS | awk '$5<30000 {print $9}' > small_file_list.txt
+parallel --jobs 50 -a small_file_list.txt count_scbam
+
+```

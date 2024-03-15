@@ -181,7 +181,7 @@ process MERGED_100KB_SUMMARIES {
 	input:
 		path cg_summaries
 	output:
-		path("*.tsv.gz")
+		path("*merged.tsv.gz")
 	script:
 	"""
 	#concatenate total count
@@ -201,6 +201,15 @@ process MERGED_100KB_SUMMARIES {
 	    zcat "\$file" | sed '1d'
 	done
 	} | gzip > mc_count.100kb.merged.tsv.gz
+
+	#concatentate mc rate
+	set -- *100kb.mc_simplerate.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_simplerate.100kb.merged.tsv.gz
 
 	#concatenate rate estimates
 	set -- *100kb.mc_posteriorest.tsv.gz
@@ -222,7 +231,7 @@ process MERGED_GENE_SUMMARIES {
 	input:
 		path cg_summaries
 	output:
-		tuple path("total_count.genebody.merged.tsv.gz"), path("mc_count.genebody.merged.tsv.gz"), path("mc_posteriorest.genebody.merged.tsv.gz")
+		path("*merged.tsv.gz")
 	script:
 	"""
 	#concatenate total count
@@ -242,6 +251,15 @@ process MERGED_GENE_SUMMARIES {
 	    zcat "\$file" | sed '1d'
 	done
 	} | gzip > mc_count.genebody.merged.tsv.gz
+
+	#concatentate mc rate
+	set -- *genebody.mc_simplerate.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_simplerate.genebody.merged.tsv.gz
 
 	#concatenate rate estimates
 	set -- *genebody.mc_posteriorest.tsv.gz
@@ -308,7 +326,7 @@ workflow {
 		| collect \
 		| MERGED_GENE_SUMMARIES
 
-		MAKE_FINAL_SEURATOBJ(hundokb_out,genebody_out,met_in)
+		//MAKE_FINAL_SEURATOBJ(hundokb_out,genebody_out,met_in)
 
 		//tf_bed = MAKE_TF_BED
 
@@ -341,6 +359,9 @@ nextflow ${srcDir}/singlecell_met_nf.groovy \
 
 cd /rsrch4/scratch/genetics/rmulqueen/met_work/c4/2ef5236657a57879d9e2c811c4b7aa
 export sif="${srcDir}/scmetR.sif"
+export sif="${srcDir}/copykit.sif"
+
+
 
 singularity shell \
 --bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src:/src/ \
