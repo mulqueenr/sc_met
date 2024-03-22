@@ -132,6 +132,48 @@ process MAKE_100KB_BED {
 }	
 
 
+process MAKE_50KB_BED {
+	//Generate transcript bed from ScaleMethyl genome.txt file
+	//Add Blacklist filter??
+	//requires bedtools
+	label 'cnv'
+
+	input:
+		path ref
+	output:
+		path("genome_windows.100kb.bed")
+
+	script:
+	"""
+	grep -v \"^K\" ${ref} \\
+	| grep -v \"^G\" \\
+	| awk \'OFS=\"\\t\" {print \"chr\"\$1,\$2}\' > genome.filt.txt
+	bedtools makewindows -w 50000 -g genome.filt.txt | awk \'OFS=\"\\t\" {print \$1,\$2,\$3,\$1\"_\"\$2\"_\"\$3}\' > genome_windows.100kb.bed
+	"""
+}	
+
+
+process MAKE_250KB_BED {
+	//Generate transcript bed from ScaleMethyl genome.txt file
+	//Add Blacklist filter??
+	//requires bedtools
+	label 'cnv'
+
+	input:
+		path ref
+	output:
+		path("genome_windows.100kb.bed")
+
+	script:
+	"""
+	grep -v \"^K\" ${ref} \\
+	| grep -v \"^G\" \\
+	| awk \'OFS=\"\\t\" {print \"chr\"\$1,\$2}\' > genome.filt.txt
+	bedtools makewindows -w 250000 -g genome.filt.txt | awk \'OFS=\"\\t\" {print \$1,\$2,\$3,\$1\"_\"\$2\"_\"\$3}\' > genome_windows.100kb.bed
+	"""
+}	
+
+
 //process MAKE_TF_MOTIF_BED {}
 process SUMMARIZE_CG_OVER_BED_100KB {
 	//publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
@@ -152,6 +194,46 @@ process SUMMARIZE_CG_OVER_BED_100KB {
 	"""
 }
 
+
+//process MAKE_TF_MOTIF_BED {}
+process SUMMARIZE_CG_OVER_BED_50KB {
+	//publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
+	input:
+		path cov_folder
+		path fiftykb_bed
+	output:
+		path("*.tsv.gz")
+	script:
+	"""
+	python /src/mc_cov_feature_summary.py \\
+	--features ${fiftykb_bed} \\
+	--feat_name 50kb \\
+	--cov_folder ${cov_folder} # --cpus 5
+	"""
+}
+
+//process MAKE_TF_MOTIF_BED {}
+process SUMMARIZE_CG_OVER_BED_250KB {
+	//publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
+	input:
+		path cov_folder
+		path twofiftykb_bed
+	output:
+		path("*.tsv.gz")
+	script:
+	"""
+	python /src/mc_cov_feature_summary.py \\
+	--features ${twofiftykb_bed} \\
+	--feat_name 250kb \\
+	--cov_folder ${cov_folder} # --cpus 5
+	"""
+}
 
 //process MAKE_TF_MOTIF_BED {}
 process SUMMARIZE_CG_OVER_BED_GENES {
@@ -222,6 +304,105 @@ process MERGED_100KB_SUMMARIES {
 	"""
 }	
 
+
+process MERGED_50KB_SUMMARIES {
+	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
+	input:
+		path cg_summaries
+	output:
+		path("*merged.tsv.gz")
+	script:
+	"""
+	#concatenate total count
+	set -- *50kb.total_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > total_count.50kb.merged.tsv.gz
+
+	#concatentate mc count
+	set -- *50kb.mc_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_count.50kb.merged.tsv.gz
+
+	#concatentate mc rate
+	set -- *50kb.mc_simplerate.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_simplerate.50kb.merged.tsv.gz
+
+	#concatenate rate estimates
+	set -- *50kb.mc_posteriorest.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_posteriorest.50kb.merged.tsv.gz
+	"""
+}	
+
+
+process MERGED_250KB_SUMMARIES {
+	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
+	input:
+		path cg_summaries
+	output:
+		path("*merged.tsv.gz")
+	script:
+	"""
+	#concatenate total count
+	set -- *250kb.total_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > total_count.250kb.merged.tsv.gz
+
+	#concatentate mc count
+	set -- *250kb.mc_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_count.250kb.merged.tsv.gz
+
+	#concatentate mc rate
+	set -- *250kb.mc_simplerate.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_simplerate.250kb.merged.tsv.gz
+
+	#concatenate rate estimates
+	set -- *250kb.mc_posteriorest.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_posteriorest.250kb.merged.tsv.gz
+	"""
+}	
 
 process MERGED_GENE_SUMMARIES {
 	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
@@ -319,6 +500,18 @@ workflow {
 		SUMMARIZE_CG_OVER_BED_100KB(covs, hundokb_bed) \
 		| collect \
 		| MERGED_100KB_SUMMARIES
+
+		fiftykb_bed = MAKE_50KB_BED("${params.genome_length}")
+		fiftykb_out =
+		SUMMARIZE_CG_OVER_BED_50KB(covs, fiftykb_bed) \
+		| collect \
+		| MERGED_50KB_SUMMARIES
+
+		twofiftykb_bed = MAKE_250KB_BED("${params.genome_length}")
+		twofiftykb_out =
+		SUMMARIZE_CG_OVER_BED_250KB(covs, twofiftykb_bed ) \
+		| collect \
+		| MERGED_250KB_SUMMARIES
 
 		gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
 		genebody_out = 
