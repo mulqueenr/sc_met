@@ -7,6 +7,7 @@ params.readcountfilter = 100000
 // Reference files
 params.projectdir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
 params.genes_bed="${params.refdir}/grch38/filteredGTF/GRCh38_transcriptsOnly.gtf"
+params.metatlas_bed="${params.refdir}/met_atlas.hg38.bed"
 params.genome_length="${params.refdir}/grch38/genome.txt"
 params.src_dir="${params.projectdir}/src/"
 params.out_dir="${params.scalemethylout}"
@@ -20,6 +21,8 @@ log.info """
 		NF Working Dir : ${workflow.workDir}
 		Src directory : ${params.src_dir}
 		Out directory : ${params.out_dir}
+		Genes Bed : ${params.genes_bed}
+		Met Atlas Bed : ${params.metatlas_bed}
 		================================================
 
 """.stripIndent()
@@ -153,7 +156,7 @@ process MAKE_50KB_BED {
 }	
 
 
-process MAKE_250KB_BED {
+process MAKE_5KB_BED {
 	//Generate transcript bed from ScaleMethyl genome.txt file
 	//Add Blacklist filter??
 	//requires bedtools
@@ -162,16 +165,18 @@ process MAKE_250KB_BED {
 	input:
 		path ref
 	output:
-		path("genome_windows.100kb.bed")
+		path("genome_windows.5kb.bed")
 
 	script:
 	"""
 	grep -v \"^K\" ${ref} \\
 	| grep -v \"^G\" \\
 	| awk \'OFS=\"\\t\" {print \"chr\"\$1,\$2}\' > genome.filt.txt
-	bedtools makewindows -w 250000 -g genome.filt.txt | awk \'OFS=\"\\t\" {print \$1,\$2,\$3,\$1\"_\"\$2\"_\"\$3}\' > genome_windows.100kb.bed
+	bedtools makewindows -w 5000 -g genome.filt.txt | awk \'OFS=\"\\t\" {print \$1,\$2,\$3,\$1\"_\"\$2\"_\"\$3}\' > genome_windows.5kb.bed
 	"""
 }	
+
+
 
 
 //process MAKE_TF_MOTIF_BED {}
@@ -190,12 +195,12 @@ process SUMMARIZE_CG_OVER_BED_100KB {
 	python /src/mc_cov_feature_summary.py \\
 	--features ${hundokb_bed} \\
 	--feat_name 100kb \\
+	--min_cg 10 \\
 	--cov_folder ${cov_folder} # --cpus 5
 	"""
 }
 
 
-//process MAKE_TF_MOTIF_BED {}
 process SUMMARIZE_CG_OVER_BED_50KB {
 	//publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
@@ -211,29 +216,33 @@ process SUMMARIZE_CG_OVER_BED_50KB {
 	python /src/mc_cov_feature_summary.py \\
 	--features ${fiftykb_bed} \\
 	--feat_name 50kb \\
+	--min_cg 5 \\
 	--cov_folder ${cov_folder} # --cpus 5
 	"""
 }
 
+
 //process MAKE_TF_MOTIF_BED {}
-process SUMMARIZE_CG_OVER_BED_250KB {
+process SUMMARIZE_CG_OVER_BED_5KB {
 	//publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
 	label 'celltype'
 
 	input:
 		path cov_folder
-		path twofiftykb_bed
+		path fivekb_bed
 	output:
 		path("*.tsv.gz")
 	script:
 	"""
 	python /src/mc_cov_feature_summary.py \\
-	--features ${twofiftykb_bed} \\
-	--feat_name 250kb \\
+	--features ${fivekb_bed} \\
+	--feat_name 5kb \\
+	--min_cg 1 \\
 	--cov_folder ${cov_folder} # --cpus 5
 	"""
 }
+
 
 //process MAKE_TF_MOTIF_BED {}
 process SUMMARIZE_CG_OVER_BED_GENES {
@@ -251,6 +260,27 @@ process SUMMARIZE_CG_OVER_BED_GENES {
 	python /src/mc_cov_feature_summary.py \\
 	--features ${gene_bed} \\
 	--feat_name genebody \\
+	--min_cg 5 \\
+	--cov_folder ${cov_folder} #--cpus 5
+	"""
+}
+
+process SUMMARIZE_CG_OVER_MET_ATLAS {
+	//publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
+	input:
+		path cov_folder
+		path metatlas_bed
+	output:
+		path("*.tsv.gz")
+	script:
+	"""
+	python /src/mc_cov_feature_summary.py \\
+	--features ${metatlas_bed} \\
+	--feat_name metatlas \\
+	--min_cg 1 \\
 	--cov_folder ${cov_folder} #--cpus 5
 	"""
 }
@@ -355,7 +385,7 @@ process MERGED_50KB_SUMMARIES {
 }	
 
 
-process MERGED_250KB_SUMMARIES {
+process MERGED_5KB_SUMMARIES {
 	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
 	label 'celltype'
@@ -367,42 +397,43 @@ process MERGED_250KB_SUMMARIES {
 	script:
 	"""
 	#concatenate total count
-	set -- *250kb.total_count.tsv.gz
+	set -- *5kb.total_count.tsv.gz
 	{
 	zcat "\$1"; shift
 	for file do
 	    zcat "\$file" | sed '1d'
 	done
-	} | gzip > total_count.250kb.merged.tsv.gz
+	} | gzip > total_count.5kb.merged.tsv.gz
 
 	#concatentate mc count
-	set -- *250kb.mc_count.tsv.gz
+	set -- *5kb.mc_count.tsv.gz
 	{
 	zcat "\$1"; shift
 	for file do
 	    zcat "\$file" | sed '1d'
 	done
-	} | gzip > mc_count.250kb.merged.tsv.gz
+	} | gzip > mc_count.5kb.merged.tsv.gz
 
 	#concatentate mc rate
-	set -- *250kb.mc_simplerate.tsv.gz
+	set -- *5kb.mc_simplerate.tsv.gz
 	{
 	zcat "\$1"; shift
 	for file do
 	    zcat "\$file" | sed '1d'
 	done
-	} | gzip > mc_simplerate.250kb.merged.tsv.gz
+	} | gzip > mc_simplerate.5kb.merged.tsv.gz
 
 	#concatenate rate estimates
-	set -- *250kb.mc_posteriorest.tsv.gz
+	set -- *5kb.mc_posteriorest.tsv.gz
 	{
 	zcat "\$1"; shift
 	for file do
 	    zcat "\$file" | sed '1d'
 	done
-	} | gzip > mc_posteriorest.250kb.merged.tsv.gz
+	} | gzip > mc_posteriorest.5kb.merged.tsv.gz
 	"""
 }	
+
 
 process MERGED_GENE_SUMMARIES {
 	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
@@ -454,6 +485,55 @@ process MERGED_GENE_SUMMARIES {
 }	
 
 
+process MERGED_MET_ATLAS_SUMMARIES {
+	publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
+	label 'celltype'
+
+	input:
+		path cg_summaries
+	output:
+		path("*merged.tsv.gz")
+	script:
+	"""
+	#concatenate total count
+	set -- *metatlas.total_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > total_count.metatlas.merged.tsv.gz
+
+	#concatentate mc count
+	set -- *metatlas.mc_count.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_count.metatlas.merged.tsv.gz
+
+	#concatentate mc rate
+	set -- *metatlas.mc_simplerate.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_simplerate.metatlas.merged.tsv.gz
+
+	#concatenate rate estimates
+	set -- *metatlas.mc_posteriorest.tsv.gz
+	{
+	zcat "\$1"; shift
+	for file do
+	    zcat "\$file" | sed '1d'
+	done
+	} | gzip > mc_posteriorest.metatlas.merged.tsv.gz
+	"""
+}	
+
 ///USE BC_MULTIOME.SIF TEMPORARILY FOR THIS
 process MAKE_FINAL_SEURATOBJ {
 	publishDir "${params.scalemethylout}/seurat_out", mode: 'copy', overwrite: true
@@ -495,6 +575,13 @@ workflow {
 		Channel.fromPath("${params.scalemethylout}/report/*/csv/*.passingCellsMapMethylStats.csv")
 		met_in = meta_data | collect
 
+
+		fiftykb_bed = MAKE_5KB_BED("${params.genome_length}")
+		fiftykb_out =
+		SUMMARIZE_CG_OVER_BED_5KB(covs, fiftykb_bed) \
+		| collect \
+		| MERGED_100KB_SUMMARIES
+
 		hundokb_bed = MAKE_100KB_BED("${params.genome_length}")
 		hundokb_out =
 		SUMMARIZE_CG_OVER_BED_100KB(covs, hundokb_bed) \
@@ -507,17 +594,17 @@ workflow {
 		| collect \
 		| MERGED_50KB_SUMMARIES
 
-		twofiftykb_bed = MAKE_250KB_BED("${params.genome_length}")
-		twofiftykb_out =
-		SUMMARIZE_CG_OVER_BED_250KB(covs, twofiftykb_bed ) \
-		| collect \
-		| MERGED_250KB_SUMMARIES
-
 		gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
 		genebody_out = 
 		SUMMARIZE_CG_OVER_BED_GENES(covs, gene_bed) \
 		| collect \
 		| MERGED_GENE_SUMMARIES
+
+		metatlas_bed = MAKE_METATLAS_BED("${params.metatlas_bed}")
+		metatlas_out = 
+		SUMMARIZE_CG_OVER_MET_ATLAS(covs, metatlas_bed) \
+		| collect \
+		| MERGED_MET_ATLAS_SUMMARIES
 
 		//MAKE_FINAL_SEURATOBJ(hundokb_out,genebody_out,met_in)
 
@@ -570,6 +657,41 @@ $sif
 
 
 /*
+
+bsub -Is -W 4:00 -q transfer -n 10 -M 10 -R rusage[mem=10] /bin/bash
+module load bedtools
+cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref
+wget https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-022-05580-6/MediaObjects/41586_2022_5580_MOESM5_ESM.zip
+unzip 41586_2022_5580_MOESM5_ESM.zip -d met_atlas
+
+conda activate bedtools-2.30.0
+merge_bed () {
+	in=$1
+	celltype=$(printf '%s\n' "$in" | cut -d. -f1)
+	awk -v outcell="$celltype" 'OFS ="\t" {print $1,$2,$3,$6,$7,outcell}' $in | tail -n +2
+}
+# add header and sort bed file, merge overlapping sites
+export -f merge_bed
+
+#header=$(echo chr$'\t'start$'\t'end$'\t'feat_description$'\t'gene$'\t'celltype)
+(parallel merge_bed ::: *bed | sort -k 1,1 -k2,2n -k3,3n - | grep "^chr[1-9|X]" | bedtools merge ) > ../met_atlas.hg19.bed
+
+#perform liftOver
+#set up
+cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src
+wget https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver
+chmod u+wrx liftOver
+cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref
+wget https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz
+
+#run
+cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref
+/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src/liftOver \
+met_atlas.hg19.bed \
+hg19ToHg38.over.chain.gz \
+met_atlas.hg38.bed \
+met_atlas.hg19.unmapped.bed
+
 
 
 ADD OVERDISPERSION

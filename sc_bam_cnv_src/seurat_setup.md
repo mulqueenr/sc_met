@@ -16,10 +16,8 @@ library(Seurat)
 library(data.table)
 library(ggplot2)
 library(patchwork)
-library(org.Hs.eg.db)
 library(dplyr)
-library(cisTopic)
-
+library(org.Hs.eg.db)
 #LOAD IN REFERENCE HBCA 
 #ref<-readRDS("/volumes/seq/projects/metACT/ref/hbca.rds")
 
@@ -30,8 +28,8 @@ row.names(meta)<-paste0(meta$sampleName,meta$BC)
 
 
 #LOAD IN ALL DATA
-read_in_data<-function(x){
-	dat<-as.data.frame(fread(x,showProgress=TRUE,nThread=20))
+read_in_data<-function(x,ncores=20){
+	dat<-as.data.frame(fread(x,showProgress=TRUE,nThread=ncores))
 	sample<-unlist(lapply(strsplit(dat[,1],"_"),"[",1))
 	bc<-unlist(lapply(dat[,1],function(x) substr(x,nchar(x)-29,nchar(x))))
 	row.names(dat)<-paste0(sample,bc)
@@ -40,67 +38,372 @@ read_in_data<-function(x){
 	return(dat)
 }
 
-hundokb_counts<-read_in_data("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_dataframes/total_count.100kb.merged.tsv.gz")
-hundokb_counts<-hundokb_counts[row.names(meta)]
-hundokb_dat<-read_in_data("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_dataframes/mc_posteriorest.100kb.merged.tsv.gz")
-hundokb_dat<-hundokb_dat[row.names(meta)]
-hundokb_rate<-read_in_data("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_dataframes/mc_simplerate.100kb.merged.tsv.gz")
-hundokb_rate<-hundokb_rate[row.names(meta)]
-cg_cov_per_cell<-data.frame(cg_count=as.numeric(colSums(hundokb_counts)),sample=meta$sampleName)
-plt<-ggplot(cg_cov_per_cell)+geom_density(aes(x=cg_count,color=sample))
-ggsave(plt,file="cg_cov_per_cell.pdf")
+#PLOT FEATURE COVERAGE DURING SEURAT OBJECT CREATION
+plot_feat_coverage<-function(meta,win,feat_counts,feat_dat,feat_rate) {
+	cg_cov_per_cell<-data.frame(cg_count=as.numeric(colSums(feat_counts)),sample=meta$sampleName)
+	plt<-ggplot(cg_cov_per_cell)+geom_density(aes(x=cg_count,color=sample))
+	ggsave(plt,file=paste0("cg_cov_per_cell.",win,".pdf"))
 
-cells_cov_per_window<-data.frame(cell_cov=as.numeric(rowSums(is.na(hundokb_dat))))
-cells_cov_per_window$cell_cov_perc<-cells_cov_per_window$cell_cov/ncol(hundokb_dat)
-cells_cov_per_window$est_rate<-as.numeric(rowMeans(hundokb_dat,na.rm=T))
-cells_cov_per_window$simple_rate<-as.numeric(rowMeans(hundokb_rate,na.rm=T))
-plt1<-ggplot(cells_cov_per_window)+geom_density(aes(x=cell_cov))
-plt2<-ggplot(cells_cov_per_window)+geom_density(aes(x=cell_cov_perc))
-plt3<-ggplot(cells_cov_per_window)+geom_density(aes(x=est_rate))
-plt4<-ggplot(cells_cov_per_window)+geom_density(aes(x=simple_rate))
-ggsave(plt1/plt2/plt3/plt4,file="cells_cov_per_window.pdf")
-row.names(hundokb_dat)<-gsub("_", "-", row.names(hundokb_dat))
-row.names(hundokb_rate)<-gsub("_", "-", row.names(hundokb_rate))
+	cells_cov_per_window<-data.frame(cell_cov=as.numeric(rowSums(is.na(feat_dat))))
+	cells_cov_per_window$cell_cov_perc<-cells_cov_per_window$cell_cov/ncol(feat_dat)
+	cells_cov_per_window$est_rate<-as.numeric(rowMeans(feat_dat,na.rm=T))
+	cells_cov_per_window$simple_rate<-as.numeric(rowMeans(feat_rate,na.rm=T))
+	plt1<-ggplot(cells_cov_per_window)+geom_density(aes(x=cell_cov))
+	plt2<-ggplot(cells_cov_per_window)+geom_density(aes(x=cell_cov_perc))
+	plt3<-ggplot(cells_cov_per_window)+geom_density(aes(x=est_rate))
+	plt4<-ggplot(cells_cov_per_window)+geom_density(aes(x=simple_rate))
+	ggsave(plt1/plt2/plt3/plt4,file=paste0("cells_cov_per_window",win,".pdf"))
+}
 
-#hundokb_dat[which(is.na(hundokb_dat),arr.ind = TRUE)] <- 1.0
-
-
-
-gene_counts<-read_in_data("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_dataframes/total_count.genebody.merged.tsv.gz")
-gene_counts<-gene_counts[row.names(meta)]
-gene_dat<-read_in_data("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_dataframes/mc_posteriorest.genebody.merged.tsv.gz")
-gene_dat<-gene_dat[row.names(meta)]
-#gene_rate<-read_in_data("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_dataframes/mc_simplerate.genebody.merged.tsv.gz")
-#gene_rate<-gene_rate[row.names(meta)]
-
-cells_cov_per_gene<-data.frame(cell_cov=as.numeric(rowSums(is.na(gene_dat))))
-cells_cov_per_gene$cell_cov_perc<-cells_cov_per_gene$cell_cov/ncol(gene_dat)
-cells_cov_per_gene$est_rate<-as.numeric(rowMeans(gene_dat,na.rm=T))
-#cells_cov_per_gene$simple_rate<-as.numeric(rowMeans(gene_rate,na.rm=T))
-plt1<-ggplot(cells_cov_per_gene)+geom_density(aes(x=cell_cov))
-plt2<-ggplot(cells_cov_per_gene)+geom_density(aes(x=cell_cov_perc))
-plt3<-ggplot(cells_cov_per_gene)+geom_density(aes(x=est_rate))
-#plt4<-ggplot(cells_cov_per_gene)+geom_density(aes(x=simple_rate))
-ggsave(plt1/plt2/plt3,file="cells_cov_per_gene.pdf")
+read_in_window<-function(
+	dir="/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_dataframes/",
+	win="100kb",
+	meta,
+	seurat_obj=NULL){
+	print(paste0("Reading in counts for ",win,"..."))
+	feat_counts<-read_in_data(paste0(dir,"/total_count.",win,".merged.tsv.gz"))
+	feat_counts<-feat_counts[row.names(meta)]
+	row.names(feat_counts)<-gsub(pattern="_",x=row.names(feat_counts),replacement="-")
+	print(paste0("Reading in rate estimates for ",win,"..."))
+	feat_dat<-read_in_data(paste0(dir,"/mc_posteriorest.",win,".merged.tsv.gz"))
+	feat_dat<-feat_dat[row.names(meta)]
+	row.names(feat_dat)<-gsub(pattern="_",x=row.names(feat_dat),replacement="-")
+	print(paste0("Reading in simple rates for ",win,"..."))
+	feat_rate<-read_in_data(paste0(dir,"/mc_simplerate.",win,".merged.tsv.gz"))
+	feat_rate<-feat_rate[row.names(meta)]
+	row.names(feat_rate)<-gsub(pattern="_",x=row.names(feat_rate),replacement="-")
 
 
-#CONVERTING ENSEMBL TO GENE SYMBOLS
-gene_names<-AnnotationDbi::select(org.Hs.eg.db, keys = row.names(gene_dat), keytype = 'ENSEMBL', columns = 'SYMBOL',multiVals="first")
-gene_names<-gene_names[which(!duplicated(gene_names$ENSEMBL)),]
-gene_names<-gene_names[which(!duplicated(gene_names$SYMBOL)),]
-genes.filter <- unique(gene_names[!is.na(gene_names$SYMBOL),]$ENSEMBL )
-gene_dat <- gene_dat[genes.filter,]
-row.names(gene_dat)<-gene_names[!is.na(gene_names$SYMBOL),]$SYMBOL
-#gene_dat[which(is.na(gene_dat),arr.ind = TRUE)] <- 1.0
+	if(win=="genebody"){ #CONVERT ENSG TO GENE NAME
+	print("Converting ENSEMBL gene ID to gene names...")
+	gene_names<-AnnotationDbi::select(org.Hs.eg.db, 
+									keys = row.names(feat_dat), 
+									keytype = 'ENSEMBL', 
+									columns = 'SYMBOL',
+									multiVals="first")
+	gene_names<-gene_names[which(!duplicated(gene_names$ENSEMBL)),]
+	gene_names<-gene_names[which(!duplicated(gene_names$SYMBOL)),]
+	genes.filter <- unique(gene_names[!is.na(gene_names$SYMBOL),]$ENSEMBL )
+	feat_dat <- feat_dat[genes.filter,]
+	feat_counts <- feat_counts[genes.filter,]
+	feat_rate <- feat_rate[genes.filter,]
+	row.names(feat_dat)<-gene_names[!is.na(gene_names$SYMBOL),]$SYMBOL
+	row.names(feat_counts)<-gene_names[!is.na(gene_names$SYMBOL),]$SYMBOL
+	row.names(feat_rate)<-gene_names[!is.na(gene_names$SYMBOL),]$SYMBOL
+	}
+
+	print(paste0("Plotting feature coverage for ",win,"..."))
+	plot_feat_coverage(meta=meta,win=win,feat_counts=feat_counts,feat_dat=feat_dat,feat_rate=feat_rate)
+	assay_name=paste0("met_",win)
+
+
+	if(is.null(seurat_obj)){
+		print(paste0("Creating seurat object..."))
+		seurat_obj <- CreateSeuratObject(
+						counts = as.matrix(feat_counts),
+						meta.data=meta,
+						assay=assay_name)
+		seurat_obj <- SetAssayData(
+						object = seurat_obj, 
+						layer = "scale.data", 
+						new.data = as.matrix(feat_dat), 
+						assay=assay_name)
+	} else {
+		print(paste0("Adding features as new assay in seurat object..."))
+		seurat_obj[[assay_name]] <- CreateAssayObject(data=as.matrix(feat_dat))
+		seurat_obj <- SetAssayData(
+						object = seurat_obj, 
+						slot = "scale.data", 
+						new.data = as.matrix(feat_dat),
+						assay=assay_name)
+	}
+	return(seurat_obj)
+}
 
 #CREATE SEURAT OBJECT
-obj <- CreateSeuratObject(counts = as.matrix(hundokb_counts),meta.data=meta,assay="met_100kb")
-obj <- SetAssayData(object = obj, layer = "scale.data", new.data = as.matrix(hundokb_dat), assay="met_100kb")
-#change slot to layers for newer seurat
-obj[["met_gene"]] <- CreateAssayObject(data=as.matrix(gene_dat))
-obj <- SetAssayData(object = obj, slot = "scale.data", new.data = as.matrix(gene_dat),assay="met_gene")
+obj<-read_in_window(win="100kb",meta=meta)
+obj<-read_in_window(win="250kb",meta=meta,seurat_obj=obj)
+obj<-read_in_window(win="50kb",meta=meta,seurat_obj=obj)
+obj<-read_in_window(win="genebody",meta=meta,seurat_obj=obj)
 
 saveRDS(obj,file="met.Rds")
+
+
+```
+
+Trying LDA via TITAN code
+
+```R
+library(TITAN)
+library(parallel)
+library(Seurat)
+library(data.table)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+
+obj<-readRDS(file="met.Rds")
+
+model_maker <- function(cellList,topics,Genes,iterations,alpha,beta,burnin,assay,outDir,outPrefix) {
+    selected.Model <- lda::lda.collapsed.gibbs.sampler(
+    	cellList, topics, Genes, 
+    	num.iterations = iterations, 
+    	alpha = alpha, eta = beta, 
+    	compute.log.likelihood = TRUE, 
+    	burnin = burnin)[-1]
+      saveRDS(selected.Model, paste0(outDir, "/Model_", as.character(topics),".",assay,".",outPrefix,".topics.rds"))
+    }
+
+RPC_calculation<-function(model_file) {
+    topic_num <- as.numeric(gsub("[^0-9]+([0-9]+).*", "\\1", 
+        model_file))
+    model <- readRDS(paste0(outDir, "/", model_file))
+    docterMat <- t(as.matrix(data.use))
+    docterMat <- as(docterMat, "sparseMatrix")
+    topworddist <- normalize(model$topics, byrow = T)
+    doctopdist <- normalize(t(model$document_sums), byrow = T)
+    perp <- text2vec::perplexity(docterMat, topworddist, doctopdist)
+    return(c(topic_num,perp))
+}
+
+runTITAN<- function(Object,
+	assay="met_100kb",
+	seed.number=123,
+	iterations=500,
+	burnin=250,
+	alpha=50,
+	beta=0.1,
+	nfeat=10000,
+	outDir="./TITAN_LDA",outPrefix="allmet",
+	topic_counts=seq(from=10, to=80, by=10)){
+	
+	set.seed(seed.number)
+	print(paste0("Setting ",assay," as assay..."))
+	Object[[assay]]<- as(object = Object[[assay]], Class = "Assay")
+
+	print("Filling NA values with 1.0 for Neg Binom Estimate...")
+	Object[[assay]]@data[which(is.na(Object[[assay]]@data),arr.ind = TRUE)] <- 1.0
+	Object <- SetAssayData(
+		object = Object, 
+		layer = "scale.data", 
+		new.data =GetAssayData(Object, layer = "data", assay = assay),
+		assay=assay)
+
+	print(paste0("Finding ",as.character(nfeat)," variable features..."))
+	var <- FindVariableFeatures(
+		GetAssayData(Object, slot = "data", assay = assay), 
+		selection.method = "dispersion",
+		nfeatures = nfeat, 
+		layer="data",
+		assay=assay)
+
+	print(paste0("Setting up data for TITAN LDA..."))
+	Object[[assay]]@var.features<-row.names(var[var$variable,])
+	Object.sparse <- GetAssayData(Object, layer = "data", assay = assay)
+	Object.sparse <- Object.sparse[VariableFeatures(Object, assay = assay), ]
+	data.use <- Matrix::Matrix(Object.sparse, sparse = T)
+	data.use <- data.use * 10 #not sure if needed #CHECK THIS, IS IT JUST 0,10,20 AT THIS POINT??
+	data.use <- round(data.use) #not sure if needed
+	data.use <- Matrix::Matrix(data.use, sparse = T)
+	sumMat <- Matrix::summary(data.use)
+	cellList <- split(as.integer(data.use@i), sumMat$j)
+	ValueList <- split(as.integer(sumMat$x), sumMat$j)
+	cellList <- mapply(rbind, cellList, ValueList, SIMPLIFY = F)
+	Genes <- rownames(data.use)
+	cellList <- lapply(cellList, function(x) {colnames(x) <- Genes[x[1, ] + 1]; x})
+
+	print(paste0("Running ",as.character(length(topic_counts)), " topic models..."))
+	lda_out<-mclapply(topic_counts, function(x) model_maker(
+		cellList=cellList,topics=x,Genes=Genes,
+		iterations=iterations,alpha=alpha,beta=beta,
+		burnin=burnin,assay=assay,outDir=outDir,outPrefix=outPrefix), mc.cores = length(topic_counts))
+
+	files <- list.files(path = outDir, pattern = "Model_")[grepl(pattern=paste0(".",assay,".",outPrefix),list.files(path = outDir, pattern = "Model_"))]
+	perp_list <- NULL
+	RPC <- NULL
+	files <- files[order(nchar(files), files)]
+
+	print(paste0("Generating perplexity estimate for model selection..."))
+	perp_out<-as.data.frame(do.call("rbind",lapply(files,RPC_calculation)))
+	colnames(perp_out) <- c("Topics", "RPC")
+	perp_out$Topics<-as.numeric(as.character(perp_out$Topics))
+	perp_out$RPC<-as.numeric(as.character(perp_out$RPC))
+
+	perp_out$perp<-as.numeric(unlist(c("NA",lapply(2:nrow(perp_out),function(i){
+		rpc_dif<-perp_out[i-1,"RPC"]-perp_out[i,"RPC"]
+		topic_dif<-perp_out[i-1,"Topics"]-perp_out[i,"Topics"]
+		return(abs(rpc_dif)/topic_dif)
+		}))))
+
+	#select topics from model based on elbow
+	elbow_topic<-perp_out$Topics[which(min(diff(perp_out$perp),na.rm=T)==diff(perp_out$perp))+1]
+	print(paste0("Found ",as.character(elbow_topic), " topics as best topic model based on elbow plot..."))
+	plt1 <- ggplot(data = perp_out, aes(x = Topics, y = RPC, group = 1)) + geom_line() + geom_point() +geom_vline(xintercept=elbow_topic,color="red")
+	plt2 <- ggplot(data = perp_out, aes(x = Topics, y = perp, group = 1)) + geom_line() + geom_point()+geom_vline(xintercept=elbow_topic,color="red")
+	ggsave(plt1/plt2,file=paste("TITAN",assay,outPrefix,"elbow.pdf",sep="_"))
+
+	top_topics<-elbow_topic #set this up as autoselect based on elbow of plt2 in future
+	top_model<-readRDS(paste0(outDir, "/", "Model_",as.character(top_topics),".",assay,".",outPrefix,".topics.rds"))
+
+	print(paste0("Adding topic model to Seurat Object as lda reduction..."))
+	Object <- addTopicsToSeuratObject(model = top_model, Object = Object)
+	#GeneDistrubition <- GeneScores(top_model)
+
+	print(paste0("Running UMAP and clustering..."))
+	Object<-RunUMAP(Object,reduction="lda",dims=1:top_topics,reduction.name="lda_umap")
+	Object <- FindNeighbors(object = Object, reduction = 'lda', dims = 1:top_topics ,graph.name="lda_snn")
+	Object <- FindClusters(object = Object, verbose = TRUE, graph.name="lda_snn", resolution=0.2 ) 
+	print("Plotting UMAPs...")
+	plt1<-DimPlot(Object,reduction="lda_umap",group.by=c("sampleName","seurat_clusters"))
+	ggsave(plt1,file=paste("TITAN",assay,outPrefix,"umap.pdf",sep="_"),width=10)
+	print("Done!")
+	return(Object)
+}
+
+out<-runTITAN(Object=obj,assay="met_250kb")
+out<-runTITAN(Object=obj,assay="met_100kb")
+
+hbca<-subset(obj, cells=Cells(obj)[startsWith(prefix="HBCA",Cells(obj))])
+out_hbca<-runTITAN(Object=hbca,assay="met_250kb",outPrefix="hbca",nfeat=10000)
+out_hbca<-runTITAN(Object=hbca,assay="met_100kb",outPrefix="hbca",nfeat=10000)
+out_hbca<-runTITAN(Object=hbca,assay="met_50kb",outPrefix="hbca",nfeat=10000)
+out_hbca<-runTITAN(Object=hbca,assay="met_genebody",outPrefix="hbca",nfeat=10000)
+
+```
+
+Trying NMF
+```R
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(SeuratWrappers)
+#install.packages("RcppML") ####add to sif
+library(RcppML)
+library(Matrix)
+
+obj<-readRDS(file="met.Rds")
+
+
+hbca_markers<-readRDS(file="hbca_markers.rds")
+top_5<-as.data.frame(hbca_markers %>% arrange(-desc(p_val_adj)) %>% group_by(cluster) %>% slice_head(n = 10)%>%ungroup)
+top_5<-top_5[!duplicated(top_5$gene),]
+
+hbca_snmarkers=list()
+hbca_snmarkers<-lapply(unique(top_5$cluster),function(i) hbca_snmarkers[[i]]<-top_5[top_5$cluster==i,]$gene)
+names(hbca_snmarkers)<-unique(top_5$cluster)
+
+runNMF<-function(Object,
+	assay="met_100kb",
+	seed.number=123,
+	nfeat=10000,
+	k_in=50,
+	outPrefix="allmet",
+	fill_na=TRUE,
+	hbca_snmarkers){
+
+	print(paste0("Setting ",assay," as assay..."))
+	Object[[assay]]<- as(object = Object[[assay]], Class = "Assay")
+
+	if(fill_na){
+	print("Filling NA values with 1.0 for Neg Binom Estimate...")
+	Object[[assay]]@data[which(is.na(Object[[assay]]@data),arr.ind = TRUE)] <- 1.0
+	}else{
+	print("Continuing with sparse matrix...")	
+	}
+	Object <- SetAssayData(
+		object = Object, 
+		layer = "scale.data", 
+		new.data =GetAssayData(Object, layer = "data", assay = assay),
+		assay=assay)
+
+	print(paste0("Finding ",as.character(nfeat)," variable features...")) #using imputed data for variable feature determination either way.
+	Obj_temp<-Object
+	Obj_temp[[assay]]@data[which(is.na(Obj_temp[[assay]]@data),arr.ind = TRUE)] <- 1.0
+	var <- FindVariableFeatures(
+		GetAssayData(Obj_temp, slot = "data", assay = assay),
+		selection.method = "dispersion",
+		nfeatures = nfeat, 
+		layer="data",
+		assay=assay)
+
+	print(paste0("Setting up data for NMF..."))
+	setRcppMLthreads(20) #parallelization threads
+	if(!fill_na){
+	Object[[assay]]@data[which(is.na(Object[[assay]]@data),arr.ind = TRUE)] <- 0 #this will convert NA to 0 which will be masked in NMF
+	sparse_dat<-as(GetAssayData(Object, slot = "data", assay = assay),"sparseMatrix")
+	sparse_dat<-sparse_dat[row.names(var)[var$variable],]
+	nmf_out<-RcppML::nmf(
+		sparse_dat,
+		 k=k_in,
+		 verbose = T,
+		 tol=1e-03,
+		 seed = seed.number,mask_zeros=TRUE)
+	} else {
+
+	full_dat<-GetAssayData(Obj_temp, slot = "data", assay = assay)[row.names(var)[var$variable],]
+	nmf_out<-RcppML::nmf(
+		full_dat,
+		 k=k_in,
+		 verbose = T,
+		 tol=1e-04,
+		 seed = seed.number)
+	}
+
+    modelMat <- nmf_out$h
+    rownames(modelMat) <- paste0("NMF_",1:nrow(modelMat))
+    colnames(modelMat) <- colnames(GetAssayData(Object, slot = "data", assay = assay))
+   	Object@reductions$nmf<-CreateDimReducObject(embeddings = t(modelMat), 
+        key = "NMF_", assay = assay, global = TRUE)
+   	print(paste0("Running UMAP and clustering..."))
+   	Object<-RunUMAP(Object,reduction="nmf",dims=1:nrow(modelMat),reduction.name="nmf_umap")
+	Object <- FindNeighbors(object = Object, reduction = 'nmf', dims = 1:nrow(modelMat) ,graph.name="nmf_snn")
+	Object <- FindClusters(object = Object, verbose = TRUE, graph.name="nmf_snn", resolution=0.2 ) 
+	
+
+	print("Plotting UMAPs...")
+	plt1<-DimPlot(Object,reduction="nmf_umap",group.by=c("sampleName","seurat_clusters","predicted.id"))
+	ggsave(plt1,file=paste("NMF",assay,outPrefix,"umap.pdf",sep="_"),width=30,height=10)
+	print("Done!")
+
+	print("Plotting HBCA marker genes by cluster...")
+	Object <- ScaleData(Object,assay=assay,do.center=T,do.scale=T)
+	Idents(Object)<-Object$seurat_clusters
+	Object[["met_genebody"]]@data[which(is.na(Object[["met_genebody"]]@data),arr.ind = TRUE)] <- 1.0
+
+	plt2<-DotPlot(Object,assay="met_genebody",features=hbca_snmarkers,scale=T,cluster.idents=T,dot.scale = 20)+ RotatedAxis()+ scale_color_gradient2(low="#313695",mid="#ffffbf",high="#a50026",na.value = "white")
+	ggsave(plt2,file="hbca_umap_predictedcells_dotplot.pdf",height=10,width=50,limitsize=FALSE)
+
+    return(Object)
+}
+
+out<-runNMF(Object=obj,assay="met_250kb")
+out<-runNMF(Object=obj,assay="met_100kb")
+out<-runNMF(Object=obj,assay="met_genebody")
+
+
+
+hbca<-subset(obj, cells=Cells(obj)[startsWith(prefix="HBCA",Cells(obj))])
+
+#Label transfer
+ref<-readRDS("/volumes/seq/projects/metACT/ref/hbca.rds")
+anchors <- FindTransferAnchors(reference = ref, query = out_hbca, reference.assay ="RNA", query.assay = "met_genebody", reduction="cca") # find anchors
+predictions <- TransferData(anchorset = anchors,refdata = ref$celltype,weight.reduction="cca")
+hbca <- AddMetaData(object = hbca, metadata = predictions)
+
+#run NMF for HBCA data
+out_hbca<-runNMF(Object=hbca,assay="met_250kb",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
+out_hbca<-runNMF(Object=hbca,assay="met_100kb",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
+out_hbca<-runNMF(Object=hbca,assay="met_50kb",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
+out_hbca<-runNMF(Object=hbca,assay="met_genebody",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
+
+
+
+
+```
+
+```R
+
 
 obj <- FindVariableFeatures(obj, selection.method = "vst", nfeatures = 5000,assay="met_100kb",layer="data")
 pdf("met_variable_100kb.pdf",width=10)
@@ -143,9 +446,6 @@ top_5<-as.data.frame(obj.markers %>% arrange(-desc(p_val_adj)) %>% group_by(clus
 pdf("met_umap_feat.pdf",height=20,width=20)
 FeaturePlot(obj, reduction = "umap",feature=top_5$gene,order=TRUE,ncol=5,cols=c("white","black"))
 dev.off()
-```
-
-```R
 ###just HBCA
 dat<-subset(obj, cells=Cells(obj)[startsWith(prefix="HBCA",Cells(obj))])
 
@@ -194,141 +494,7 @@ saveRDS(dat,file="hbca_met.Rds")
 
 ```
 
-Trying LDA via TITAN code
 
-```R
-library(TITAN)
-library(parallel)
-library(Seurat)
-library(data.table)
-library(ggplot2)
-library(patchwork)
-library(dplyr)
-
-dat<-readRDS(file="met.Rds")
-
-
-model_maker <- function(topics) {
-    selected.Model <- lda::lda.collapsed.gibbs.sampler(
-    	cellList, topics, Genes, 
-    	num.iterations = iterations, 
-    	alpha = alpha, eta = beta, 
-    	compute.log.likelihood = TRUE, 
-    	burnin = burnin)[-1]
-      saveRDS(selected.Model, paste0(outDir, "/Model_", as.character(topics), "topics.rds"))
-    }
-
-RPC_calculation<-function(model_file) {
-    topic_num <- as.numeric(gsub("[^0-9]+([0-9]+).*", "\\1", 
-        model_file))
-    topic_numbers <- c(topic_numbers, topic_num)
-    model <- readRDS(paste0(outDir, "/", model_file))
-    docterMat <- t(as.matrix(data.use))
-    docterMat <- as(docterMat, "sparseMatrix")
-    topworddist <- normalize(model$topics, byrow = T)
-    doctopdist <- normalize(t(model$document_sums), byrow = T)
-    perp <- text2vec::perplexity(docterMat, topworddist, doctopdist)
-    return(c(topic_num,perp))
-}
-
-runTITAN<- function(Object,
-	assay="met_100kb",
-	seed.number=123,
-	iterations=500,
-	burnin=250,
-	alpha=50,
-	beta=0.1,
-	nfeat=10000,
-	outDir="./TITAN_LDA",
-	topic_counts=seq(from=5, to=80, by=5)){
-	
-	set.seed(seed.number)
-	print(paste0("Setting ",assay," as assay..."))
-	Object[[assay]]<- as(object = Object[[assay]], Class = "Assay")
-
-	print("Filling NA values with 1.0 for Neg Binom Estimate...")
-	Object[[assay]]@data[which(is.na(Object[[assay]]@data),arr.ind = TRUE)] <- 1.0
-	Object <- SetAssayData(
-		object = Object, 
-		slot = "scale.data", 
-		new.data =GetAssayData(Object, slot = "data", assay = assay),
-		assay=assay)
-
-	print(paste0("Finding ",as.character(nfeat)," variable features..."))
-	var <- FindVariableFeatures(
-		GetAssayData(Object, slot = "data", assay = assay), 
-		selection.method = "dispersion",
-		nfeatures = nfeat, 
-		slot="data",
-		assay=assay)
-
-	print(paste0("Setting up data for TITAN LDA..."))
-	Object[[assay]]@var.features<-row.names(var[var$variable,])
-	Object.sparse <- GetAssayData(Object, slot = "data", assay = assay)
-	Object.sparse <- Object.sparse[VariableFeatures(Object, assay = assay), ]
-	data.use <- Matrix::Matrix(Object.sparse, sparse = T)
-	data.use <- data.use * 10 #not sure if needed
-	data.use <- round(data.use) #not sure if needed
-	data.use <- Matrix::Matrix(data.use, sparse = T)
-	sumMat <- Matrix::summary(data.use)
-	cellList <- split(as.integer(data.use@i), sumMat$j)
-	ValueList <- split(as.integer(sumMat$x), sumMat$j)
-	cellList <- mapply(rbind, cellList, ValueList, SIMPLIFY = F)
-	Genes <- rownames(data.use)
-	cellList <- lapply(cellList, function(x) {colnames(x) <- Genes[x[1, ] + 1]; x})
-
-	print(paste0("Running ",as.character(length(topic_counts)), " topic models..."))
-	lda_out<-mclapply(topic_counts, model_maker, mc.cores = length(topic_counts))
-
-	files <- list.files(path = outDir, pattern = "Model_")
-	perp_list <- NULL
-	topic_numbers <- NULL
-	RPC <- NULL
-	files <- files[order(nchar(files), files)]
-
-	print(paste0("Generating perplexity estimate for model selection..."))
-	perp_out<-as.data.frame(do.call("rbind",lapply(files,RPC_calculation)))
-	colnames(perp_out) <- c("Topics", "RPC")
-	perp_out$Topics<-as.numeric(as.character(perp_out$Topics))
-	perp_out$RPC<-as.numeric(as.character(perp_out$RPC))
-
-	perp_out$perp<-as.numeric(unlist(c("NA",lapply(2:nrow(perp_out),function(i){
-		rpc_dif<-perp_out[i-1,"RPC"]-perp_out[i,"RPC"]
-		topic_dif<-perp_out[i-1,"Topics"]-perp_out[i,"Topics"]
-		return(abs(rpc_dif)/topic_dif)
-		}))))
-
-	#select topics from model based on elbow
-	print(paste0("Found ",as.character(elbow_topic), " topics as best topic model based on elbow plot..."))
-	elbow_topic<-perp_out$Topics[which(min(diff(perp_out$perp),na.rm=T)==diff(perp_out$perp))+1]
-	plt1 <- ggplot(data = perp_out, aes(x = Topics, y = RPC, group = 1)) + geom_line() + geom_point() +geom_vline(xintercept=elbow_topic,color="red")
-	plt2 <- ggplot(data = perp_out, aes(x = Topics, y = perp, group = 1)) + geom_line() + geom_point()+geom_vline(xintercept=elbow_topic,color="red")
-	ggsave(plt1/plt2,file=paste0("TITAN_",assay,"_elbow.pdf"))
-
-	top_topics<-elbow_topic #set this up as autoselect based on elbow of plt2 in future
-	top_model<-readRDS(paste0(outDir, "/", "Model_",as.character(top_topics),"topics.rds"))
-
-	print(paste0("Adding topic model to Seurat Object as lda reduction..."))
-	Object <- addTopicsToSeuratObject(model = top_model, Object = Object)
-	#GeneDistrubition <- GeneScores(top_model)
-
-	print(paste0("Running UMAP and clustering..."))
-	Object<-RunUMAP(Object,reduction="lda",dims=1:top_topics,reduction.name="lda_umap")
-	Object <- FindNeighbors(object = Object, reduction = 'lda', dims = 1:top_topics ,graph.name="lda_snn")
-	Object <- FindClusters(object = Object, verbose = TRUE, graph.name="lda_snn", resolution=0.2 ) 
-	print("Plotting UMAPs...")
-	plt1<-DimPlot(Object,reduction="lda_umap",group.by=c("sampleName","seurat_clusters"))
-	ggsave(plt1,file=paste0("TITAN_",assay,"_umap.pdf"))
-	print("Done!")
-	return(Object)
-}
-
-out<-runTITAN(Object=dat,assay="met_100kb")
-
-hbca<-subset(dat, cells=Cells(dat)[startsWith(prefix="HBCA",Cells(dat))])
-out<-runTITAN(Object=hbca,assay="met_100kb")
-
-```
 
 CisTOPIC LDA based analysis
 

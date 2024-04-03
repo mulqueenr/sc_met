@@ -14,6 +14,9 @@ parser.add_argument('--feat_name', dest='feat_name',
                     help='Outfile feature names. To be appended to the outfile names.')
 parser.add_argument('--cov_folder', dest='cov_folder',
                     help='Folder output of ScaleMethyl Pipeline containing cov.gz files per chromosome.')
+parser.add_argument('--min_cg', dest='min_cg',
+                    help='Minimum count of CG sites for feature reporting (otherwise NA)')
+
 #parser.add_argument('--cpus', dest='task_cpus',
                     #help='Cpus to use for process pool.')
 
@@ -118,7 +121,7 @@ mc_out.to_csv(sample_name+"."+feat_name+".mc_count.tsv.gz",sep="\t",header=True,
 
 """ SIMPLE RATE ESTIMATE
 met/all_c with a coverage cutoff for reporting (default is 10)"""
-args=[(cov_out.T,mc_out.T,x,10) for x in cov_out.index]
+args=[(cov_out.T,mc_out.T,x,min_cg) for x in cov_out.index]
 if __name__ == '__main__':
 	# generate met coverage pandas df
 	with multiprocessing.Pool(processes=1) as pool:
@@ -130,7 +133,7 @@ df_rate.to_csv(sample_name+"."+feat_name+".mc_simplerate.tsv.gz",sep="\t",header
 
 """ NEG BINOM RATE ESTIMATE
 #modified from https://github.com/lhqing/ALLCools/blob/master/ALLCools/mcds/utilities.py """
-args=[(cov_out.T,mc_out.T,x,10) for x in cov_out.index]
+args=[(cov_out.T,mc_out.T,x,min_cg) for x in cov_out.index]
 if __name__ == '__main__':
 	# generate met coverage pandas df
 	with multiprocessing.Pool(processes=1) as pool:
