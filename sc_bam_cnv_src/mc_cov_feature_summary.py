@@ -15,10 +15,9 @@ parser.add_argument('--feat_name', dest='feat_name',
 parser.add_argument('--cov_folder', dest='cov_folder',
                     help='Folder output of ScaleMethyl Pipeline containing cov.gz files per chromosome.')
 parser.add_argument('--min_cg', dest='min_cg',
-                    help='Minimum count of CG sites for feature reporting (otherwise NA)')
-
-#parser.add_argument('--cpus', dest='task_cpus',
-                    #help='Cpus to use for process pool.')
+                    help='Minimum count of CG sites for feature reporting (otherwise 1)')
+parser.add_argument('--cpus', dest='task_cpus',
+                    help='Cpus to use for process pool.')
 
 args = parser.parse_args()
 #python /src/mc_cov_feature_summary.py \
@@ -55,7 +54,7 @@ def cov_per_chrom(cov,feat,mc_cov_only=False):
 	args=[(dat,win,x,mc_cov_only) for x in dat.cellid.unique().tolist()]
 	if __name__ == '__main__':
 		# generate met coverage pandas df
-		with multiprocessing.Pool(processes=1) as pool:
+		with multiprocessing.Pool(processes=cpus) as pool:
 			out=pool.starmap(cov_per_feat,args)
 	df_cov = pd.DataFrame(out,columns=win.win_name.unique(),index=dat.cellid.unique())
 	df_cov = df_cov.replace({None: np.nan})  # Replacing None with NaN for missing values
@@ -98,6 +97,8 @@ def posterior_mcrate_estimate(cov_out,mc_out,cellid,cutoff):
 All CGs measured that overlap per feature """
 #adding filter to remove Y chr
 feat_name=args.feat_name
+min_cg=int(args.min_cg)
+cpus=int(args.task_cpus)
 cov_chr = [cov_per_chrom(cov,args.feat,mc_cov_only=False) for cov in glob.glob(os.path.join("./"+args.cov_folder,"chr*bed.gz")) if "chrY" not in cov ]
 cov_out = pd.concat(cov_chr,axis=1).transpose().sort_index()
 sample_name = args.cov_folder.split("/")[-1].split(".")[0]+"_"+args.cov_folder.split("/")[-1].split(".")[1]
@@ -124,7 +125,7 @@ met/all_c with a coverage cutoff for reporting (default is 10)"""
 args=[(cov_out.T,mc_out.T,x,min_cg) for x in cov_out.index]
 if __name__ == '__main__':
 	# generate met coverage pandas df
-	with multiprocessing.Pool(processes=1) as pool:
+	with multiprocessing.Pool(processes=cpus) as pool:
 		out=pool.starmap(mcrate_simple,args)
 
 df_rate = pd.DataFrame(out)
@@ -136,7 +137,7 @@ df_rate.to_csv(sample_name+"."+feat_name+".mc_simplerate.tsv.gz",sep="\t",header
 args=[(cov_out.T,mc_out.T,x,min_cg) for x in cov_out.index]
 if __name__ == '__main__':
 	# generate met coverage pandas df
-	with multiprocessing.Pool(processes=1) as pool:
+	with multiprocessing.Pool(processes=cpus) as pool:
 		out=pool.starmap(posterior_mcrate_estimate,args)
 
 df_posterior = pd.DataFrame(out)
