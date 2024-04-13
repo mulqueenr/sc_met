@@ -24,6 +24,8 @@ log.info """
 		Out directory : ${params.out_dir}
 		Genes Bed : ${params.genes_bed}
 		Met Atlas Bed : ${params.metatlas_bed}
+		Feature to summarize over : ${params.feat}
+		CNV Calling : ${params.cnv_call}
 		================================================
 
 """.stripIndent()
@@ -44,6 +46,7 @@ process SPLIT_GROUPED_BAM {
 	bam_name="${bams}"
 	export cellline=\$(echo \$bam_name | cut -d \'.\' -f 1 )
 	export well=\$(echo \$bam_name | cut -d \'.\' -f 2 )
+	
 	samtools view -@ ${task.cpus} ${bams} \\
 	| awk -v b=${bams} \'{split(\$1,a,\":\"); print a[1],b}\' \\
 	| sort \\
@@ -90,7 +93,7 @@ process BAM_TO_BED_MET {
 
 	#generate read bed 
 	samtools view ${sorted_bams} \\
-	| awk 'OFS=\"\\t\"{split(\$1,a,\":\");if(\$15==\"XC:i:0\")print \$3,\$4,\$8,a[1]}' \\
+	| awk 'OFS=\"\\t\"{split(\$1,a,\":\");if(\$15==\"XC:i:0\")print \$3,\$4,\$4+\$9,a[1]}' \\
 	| gzip > \${cellline}.\${well}.\${outidx}.read.bed.gz
 
 	#generate x|X count
@@ -142,9 +145,11 @@ process BED_MET_ATLAS_OVERLAP {
 	feat_name=\"metatlas\"
 
 	bedtools intersect -a ${ref} -b ${cg_read} -wao \\
-	| bedtools groupby -g 4,8 -c 5,9,10 -o count,sum,sum \\
+	| awk '{ gsub(\"[.]\", \"0\"); print \$0}' \\
+	| bedtools groupby -g 4 -c 9,10 -o sum \\
 	| sort -k1,1 \\
-	| awk 'OFS=\"\t\"{if(\$5/\$4>0.9){print \$0,1}else{print \$0,0}}' \\
+	| awk 'OFS=\"\\t\"{if(\$3/\$2>0.9){print \$0,1}else{print \$0,0}}' \\
+	| awk 'OFS=\"\\t\"{if(int(\$2)==0){print \$1,\$2,\$3,\".\"}else{print \$0}}' \\
 	| gzip > ${cg_read.baseName}.\${feat_name}.bed.gz
 
 	"""
@@ -166,11 +171,13 @@ process BED_MET_ATLAS_SUMMARY {
 	#concatentate to data frame
 	set -- *.metatlas.bed.gz
 	{
-	zcat \"\$1\"; shift
+	zcat "\$1" | awk '{print \$1,\$4}'; shift
 	for file do
-	    zcat \"\$file\" | sed '6d'
+	    zcat "\$file" | awk '{print \$4}' | sed '1d'
 	done
 	} | gzip > metatlas.read_summary.tsv.gz
+
+
 	"""
 }
 
@@ -227,6 +234,7 @@ process MAKE_5KB_BED {
 	//Generate transcript bed from ScaleMethyl genome.txt file
 	//Add Blacklist filter??
 	//requires bedtools
+	
 	label 'cnv'
 
 	input:
@@ -239,7 +247,9 @@ process MAKE_5KB_BED {
 	grep -v \"^K\" ${ref} \\
 	| grep -v \"^G\" \\
 	| awk \'OFS=\"\\t\" {print \"chr\"\$1,\$2}\' > genome.filt.txt
-	bedtools makewindows -w 5000 -g genome.filt.txt | awk \'OFS=\"\\t\" {print \$1,\$2,\$3,\$1\"_\"\$2\"_\"\$3}\' > genome_windows.5kb.bed
+	
+	bedtools makewindows -w 5000 -g genome.filt.txt \\
+	| awk \'OFS=\"\\t\" {print \$1,\$2,\$3,\$1\"_\"\$2\"_\"\$3}\' > genome_windows.5kb.bed
 	"""
 }	
 
@@ -374,7 +384,7 @@ workflow {
 
 	/* RUN CNV PROFILING ON CNVS */	
 
-		if( "${params.cnv_call}" == "TRUE" ) {
+		if( "${params.cnv_call}" == "true" ) {
 			sorted_bams = 
 			SPLIT_GROUPED_BAM(bams)
 
@@ -383,7 +393,7 @@ workflow {
 
 
 			//Summarize CG over reads
-			cg_beds=BAM_TO_BED_MET(sorted_bams)
+			cg_beds=sorted_bams | flatten | BAM_TO_BED_MET
 			BED_MET_ATLAS_OVERLAP(cg_beds,"${params.metatlas_bed}") | collect | BED_MET_ATLAS_SUMMARY
 
 		}
@@ -423,24 +433,13 @@ workflow {
 
 
 /*
-ADDITIONAL COMMANDS
-		hundokb_bed = MAKE_100KB_BED("${params.genome_length}")
-		hundokb_out =
-		SUMMARIZE_CG_OVER_BED_100KB(covs, hundokb_bed) \
-		| collect \
-		| MERGED_100KB_SUMMARIES
 
-		fiftykb_bed = MAKE_50KB_BED("${params.genome_length}")
-		fiftykb_out =
-		SUMMARIZE_CG_OVER_BED_50KB(covs, fiftykb_bed) \
-		| collect \
-		| MERGED_50KB_SUMMARIES
 
 RUNNING MANUALLY
 bsub -Is -W 36:00 -q long -n 10 -M 100 -R rusage[mem=100] /bin/bash
 
 #to remove metatlas process scratch
-rf -rf $(find . -type f -name "*metatlas*" | awk 'FS="/" {print $1"/"$2"/"$3}' -)
+rf -rf $(find /rsrch4/scratch/genetics/rmulqueen/met_work/ -type f -name "*read.bed.gz" | awk 'FS="/" {print $1"/"$2"/"$3}' -)
 
 #load modules
 module load nextflow/23.04.3
