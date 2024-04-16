@@ -12,6 +12,7 @@ singularity shell \
 
 Load data
 ```R
+#singularity shell --bind /volumes/seq/projects/metACT ~/multiome_bc.sif 
 library(Seurat)
 library(data.table)
 library(ggplot2)
@@ -20,7 +21,7 @@ library(dplyr)
 library(org.Hs.eg.db)
 #LOAD IN REFERENCE HBCA 
 #ref<-readRDS("/volumes/seq/projects/metACT/ref/hbca.rds")
-
+setwd("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2")
 #LOAD IN META FILES
 meta_files<-list.files(recursive=TRUE,path="/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/report",pattern="*.passingCellsMapMethylStats.csv",full.names=TRUE)
 meta<-do.call("rbind",lapply(meta_files,function(x) read.csv(sep=",",file=x,header=T)))
@@ -44,6 +45,7 @@ plot_feat_coverage<-function(meta,win,feat_counts,feat_dat,feat_rate) {
 	plt<-ggplot(cg_cov_per_cell)+geom_density(aes(x=cg_count,color=sample))
 	ggsave(plt,file=paste0("cg_cov_per_cell.",win,".pdf"))
 
+	windows_cov_per_cell<-data.frame(window_cov=as.numeric(colSums(is.na(feat_dat))))
 	cells_cov_per_window<-data.frame(cell_cov=as.numeric(rowSums(is.na(feat_dat))))
 	cells_cov_per_window$cell_cov_perc<-cells_cov_per_window$cell_cov/ncol(feat_dat)
 	cells_cov_per_window$est_rate<-as.numeric(rowMeans(feat_dat,na.rm=T))
@@ -52,14 +54,16 @@ plot_feat_coverage<-function(meta,win,feat_counts,feat_dat,feat_rate) {
 	plt2<-ggplot(cells_cov_per_window)+geom_density(aes(x=cell_cov_perc))
 	plt3<-ggplot(cells_cov_per_window)+geom_density(aes(x=est_rate))
 	plt4<-ggplot(cells_cov_per_window)+geom_density(aes(x=simple_rate))
-	ggsave(plt1/plt2/plt3/plt4,file=paste0("cells_cov_per_window",win,".pdf"))
+	plt5<-ggplot(windows_cov_per_cell)+geom_density(aes(x=window_cov))
+	ggsave(plt1/plt2/plt3/plt4/plt5,file=paste0("cells_cov_per_window",win,".pdf"))
 }
 
 read_in_window<-function(
 	dir="/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_dataframes/",
 	win="100kb",
 	meta,
-	seurat_obj=NULL){
+	seurat_obj=NULL,
+	store_estimator_as_scaledata=FALSE){
 	print(paste0("Reading in counts for ",win,"..."))
 	feat_counts<-read_in_data(paste0(dir,"/total_count.",win,".merged.tsv.gz"))
 	feat_counts<-feat_counts[row.names(meta)]
@@ -103,34 +107,259 @@ read_in_window<-function(
 						counts = as.matrix(feat_counts),
 						meta.data=meta,
 						assay=assay_name)
+		if(store_estimator_as_scaledata){
 		seurat_obj <- SetAssayData(
 						object = seurat_obj, 
 						layer = "scale.data", 
 						new.data = as.matrix(feat_dat), 
 						assay=assay_name)
+		}else{
+		seurat_obj <- SetAssayData(
+			object = seurat_obj, 
+			layer = "scale.data", 
+			new.data = as.matrix(feat_rate), 
+			assay=assay_name)
+		}
 	} else {
 		print(paste0("Adding features as new assay in seurat object..."))
+		if(store_estimator_as_scaledata){
 		seurat_obj[[assay_name]] <- CreateAssayObject(data=as.matrix(feat_dat))
 		seurat_obj <- SetAssayData(
 						object = seurat_obj, 
-						slot = "scale.data", 
-						new.data = as.matrix(feat_dat),
+						layer = "scale.data", 
+						new.data = as.matrix(feat_dat), 
 						assay=assay_name)
+		}else{
+		seurat_obj[[assay_name]] <- CreateAssayObject(data=as.matrix(feat_rate))
+		seurat_obj <- SetAssayData(
+			object = seurat_obj, 
+			layer = "scale.data", 
+			new.data = as.matrix(feat_rate), 
+			assay=assay_name)
+		}
+
 	}
 	return(seurat_obj)
 }
 
 #CREATE SEURAT OBJECT
-obj<-read_in_window(win="100kb",meta=meta)
-obj<-read_in_window(win="250kb",meta=meta,seurat_obj=obj)
-obj<-read_in_window(win="50kb",meta=meta,seurat_obj=obj)
+obj<-read_in_window(win="metatlas",meta=meta)
 obj<-read_in_window(win="genebody",meta=meta,seurat_obj=obj)
+saveRDS(obj,file="met.metatlas.Rds")
+
+obj<-read_in_window(win="100kb",meta=meta)
+obj<-read_in_window(win="250kb",meta=meta)
+obj<-read_in_window(win="50kb",meta=meta)
 
 saveRDS(obj,file="met.Rds")
 
 
 ```
 
+Trying LSI
+
+```R
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+setwd("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2")
+obj<-readRDS(file="met.metatlas.Rds")
+assay="met_metatlas"
+DefaultAssay(obj)<-assay
+mat<-GetAssayData(obj, layer = "data", assay = assay)
+#binarize matrix
+mat[mat>0.85]<-1
+mat[mat<=0.85]<-0
+#filter out nonuseful sites (require at least 5% of cells to have info)
+mat<-mat[rowSums(!is.na(mat))>ncol(mat)/10,]
+library(cluster)
+test<-daisy(t(mat))
+mds <- cmdscale(d = test, k = 2)
+
+CreateDimReducObject
+#reset into seurat object
+obj<-SetAssayData(object=obj,layer = "scale.data", new.data = mat)
+
+#list variable features before imputation
+var <- FindVariableFeatures(
+	GetAssayData(obj, layer = "scale.data", assay = assay), 
+	selection.method = "dispersion",
+	nfeatures = nfeat, 
+	layer="scale.data",
+	assay=assay)
+
+
+
+as.factor(colnames(mat)[mat %*% 1:ncol(mat)])
+
+daisy(mat)
+tf_idf<-function(data, scale_factor=100000){
+        # add small value in case down sample creates empty feature
+        col_sum<-colSum(data,na.rm=T)
+        if sparse_input:
+            col_sum = _col_sum.A1.astype(np.float32) + 0.00001
+        idf = np.log(1 + data.shape[0] / col_sum).astype(np.float32)
+    else:
+        idf = idf.astype(np.float32)
+
+    _row_sum = data.sum(axis=1)
+    if sparse_input:
+        row_sum = _row_sum.A1.astype(np.float32) + 0.00001
+    else:
+        row_sum = _row_sum.ravel().astype(np.float32) + 0.00001
+
+    tf = data.astype(np.float32)
+
+    if sparse_input:
+        tf.data = tf.data / np.repeat(row_sum, tf.getnnz(axis=1))
+        tf.data = np.log1p(np.multiply(tf.data, scale_factor, dtype="float32"))
+        tf = tf.multiply(idf)
+    else:
+        tf = tf / row_sum[:, np.newaxis]
+        tf = np.log1p(np.multiply(tf, scale_factor, dtype="float32"))
+        tf = tf * idf
+    return tf, idf
+
+
+
+
+obj <- RunSVD(obj, n = 50, scale.max = NULL)
+pbmc.atac <- RunUMAP(pbmc.atac, reduction = "lsi", dims = 1:50)
+
+library(missMDA)
+#calculate highest variance before filtering further
+
+dat<-estim_ncpMCA(don=as.character(t(mat)),ncp.min=0, ncp.max=5)
+RunLSI(mat)
+
+nb <- estim_ncpPCA(t(mat), method.cv = "Kfold")
+nb$ncp
+
+pdf(paste0(assay,".estimatedPC.pdf"))
+plot(0:5, nb$criterion, xlab = "nb dim", ylab ="MSEP")
+dev.off()
+
+res.comp <- imputePCA(don, ncp = nb$ncp)
+
+
+```
+
+
+Run NMF on binarized data, assume missing values are methylated.
+```R
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(SeuratWrappers)
+#install.packages("RcppML") ####add to sif
+library(RcppML)
+library(Matrix)
+
+setwd("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2")
+
+obj<-readRDS(file="met.metatlas.Rds")
+
+#runNMF<-function(Object,
+	Object<-obj
+	assay="met_metatlas";
+	seed.number=123;
+	nfeat=1000;
+	k_in=50;
+	outPrefix="allmet";
+	#hbca_snmarkers){
+
+	print(paste0("Setting ",assay," as assay..."))
+	Object[[assay]]<- as(object = Object[[assay]], Class = "Assay")
+
+	print("Continuing with sparse matrix...")	
+	Object <- SetAssayData(
+		object = Object, 
+		layer = "scale.data", 
+		new.data =GetAssayData(Object, layer = "data", assay = assay),
+		assay=assay)
+
+	print(paste0("Finding ",as.character(nfeat)," variable features...")) #using imputed data for variable feature determination either way.
+	#filter out nonuseful sites (require at least 10% of cells to have info)
+	#Object[[assay]]@data<-Object[[assay]]@data[rowSums(!is.na(Object[[assay]]@data))>ncol(Object[[assay]]@data)/10,]
+	
+	#binarize matrix
+	Object[[assay]]@data[which(Object[[assay]]@data<0.85,arr.ind = TRUE)] <- 0.01 #this will preserve 0 values
+	Object[[assay]]@data[which(Object[[assay]]@data>=0.85,arr.ind = TRUE)] <- 1
+	Object[[assay]]@data[which(is.na(Object[[assay]]@data),arr.ind = TRUE)] <- 0 #this will convert NA to 0 which will be masked in NMF
+
+	var_feat <- FindVariableFeatures(
+		GetAssayData(Object, layer = "data", assay = assay),
+		selection.method = "dispersion",
+		nfeatures = nfeat, 
+		layer="data",
+		assay=assay)
+
+	print(paste0("Setting up data for NMF..."))
+	sparse_dat<-as(GetAssayData(Object, layer = "data", assay = assay),"sparseMatrix")
+	#sparse_dat<-sparse_dat[row.names(var_feat)[var_feat$variable],]
+	setRcppMLthreads(1) #parallelization threads
+	nmf_out<-RcppML::nmf(
+		sparse_dat,
+		 k=k_in,
+		 verbose = T,
+		 tol=1e-03,
+		 seed = seed.number,mask_zeros=TRUE)
+
+    modelMat <- nmf_out$h
+    rownames(modelMat) <- paste0("NMF_",1:nrow(modelMat))
+    colnames(modelMat) <- colnames(GetAssayData(Object, slot = "data", assay = assay))
+   	Object@reductions$nmf<-CreateDimReducObject(embeddings = t(modelMat), 
+        key = "NMF_", assay = assay, global = TRUE)
+   	print(paste0("Running UMAP and clustering..."))
+   	Object<-RunUMAP(Object,reduction="nmf",dims=1:nrow(modelMat),reduction.name="nmf_umap")
+	Object <- FindNeighbors(object = Object, reduction = 'nmf', dims = 1:nrow(modelMat) ,graph.name="nmf_snn")
+	Object <- FindClusters(object = Object, verbose = TRUE, graph.name="nmf_snn", resolution=0.2 ) 
+	
+
+	print("Plotting UMAPs...")
+	plt1<-DimPlot(Object,reduction="nmf_umap",group.by=c("sampleName","seurat_clusters","predicted.id"))
+	ggsave(plt1,file=paste("NMF",assay,outPrefix,"umap.pdf",sep="_"),width=30,height=10)
+	print("Done!")
+
+	#print("Plotting HBCA marker genes by cluster...")
+	#Object <- ScaleData(Object,assay=assay,do.center=T,do.scale=T)
+	#Idents(Object)<-Object$seurat_clusters
+	#Object[["met_genebody"]]@data[which(is.na(Object[["met_genebody"]]@data),arr.ind = TRUE)] <- 1.0
+
+	#plt2<-DotPlot(Object,assay="met_genebody",features=hbca_snmarkers,scale=T,cluster.idents=T,dot.scale = 20)+ RotatedAxis()+ scale_color_gradient2(low="#313695",mid="#ffffbf",high="#a50026",na.value = "white")
+	#ggsave(plt2,file="hbca_umap_predictedcells_dotplot.pdf",height=10,width=50,limitsize=FALSE)
+
+    return(Object)
+}
+
+out<-runNMF(Object=obj,assay="met_metatlas")
+
+out<-runNMF(Object=obj,assay="met_250kb")
+out<-runNMF(Object=obj,assay="met_100kb")
+out<-runNMF(Object=obj,assay="met_genebody")
+
+
+
+hbca<-subset(obj, cells=Cells(obj)[startsWith(prefix="HBCA",Cells(obj))])
+
+#Label transfer
+ref<-readRDS("/volumes/seq/projects/metACT/ref/hbca.rds")
+anchors <- FindTransferAnchors(reference = ref, query = out_hbca, reference.assay ="RNA", query.assay = "met_genebody", reduction="cca") # find anchors
+predictions <- TransferData(anchorset = anchors,refdata = ref$celltype,weight.reduction="cca")
+hbca <- AddMetaData(object = hbca, metadata = predictions)
+
+#run NMF for HBCA data
+out_hbca<-runNMF(Object=hbca,assay="met_250kb",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
+out_hbca<-runNMF(Object=hbca,assay="met_100kb",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
+out_hbca<-runNMF(Object=hbca,assay="met_50kb",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
+out_hbca<-runNMF(Object=hbca,assay="met_genebody",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
+
+
+
+
+```
 Trying LDA via TITAN code
 
 ```R
@@ -143,6 +372,7 @@ library(patchwork)
 library(dplyr)
 
 obj<-readRDS(file="met.Rds")
+setwd("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2")
 
 model_maker <- function(cellList,topics,Genes,iterations,alpha,beta,burnin,assay,outDir,outPrefix) {
     selected.Model <- lda::lda.collapsed.gibbs.sampler(
@@ -282,7 +512,9 @@ library(SeuratWrappers)
 library(RcppML)
 library(Matrix)
 
-obj<-readRDS(file="met.Rds")
+setwd("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2")
+
+obj<-readRDS(file="met.metatlas.Rds")
 
 
 hbca_markers<-readRDS(file="hbca_markers.rds")
@@ -376,6 +608,8 @@ runNMF<-function(Object,
 
     return(Object)
 }
+
+out<-runNMF(Object=obj,assay="met_metatlas")
 
 out<-runNMF(Object=obj,assay="met_250kb")
 out<-runNMF(Object=obj,assay="met_100kb")
@@ -665,6 +899,34 @@ pdf("hbca_umap_predictedcells_dotplot.pdf",height=10,width=50)
 Idents(x)<-x$seurat_clusters
 DotPlot(x,assay="met_gene",features=unlist(features),scale=F,cluster.idents=T)
 dev.off()
+
+```
+
+Trying missMDA for missing data PCA with no weights given to imputed data
+
+```R
+#singularity shell --bind /volumes/seq/projects/metACT ~/multiome_bc.sif 
+library(Seurat)
+library(data.table)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(org.Hs.eg.db)
+setwd("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2")
+
+#install.packages("missMDA")
+library(missMDA)
+obj<-readRDS(file="met.metatlas.Rds")
+assay="met_metatlas"
+don<-as.data.frame(t(GetAssayData(object = obj, assay = assay, slot = "scale.data")))
+nb <- estim_ncpPCA(don, method.cv = "Kfold")
+nb$ncp
+
+pdf(paste0(assay,".estimatedPC.pdf"))
+plot(0:5, nb$criterion, xlab = "nb dim", ylab ="MSEP")
+dev.off()
+
+res.comp <- imputePCA(don, ncp = nb$ncp)
 
 ```
 #color gene plots by hbca snrna top marker genes

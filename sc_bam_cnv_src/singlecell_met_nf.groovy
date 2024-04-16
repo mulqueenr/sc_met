@@ -32,6 +32,7 @@ log.info """
 
 // CNV BLOCK //
 process SPLIT_GROUPED_BAM { 
+	publishDir "${params.scalemethylout}/postprocessing/sc_bams", mode: 'copy', overwrite: true
 	// Generate a count per grouped bam and pass list.
 	maxForks 10
 	cpus 5
@@ -165,19 +166,13 @@ process BED_MET_ATLAS_SUMMARY {
 	input:
 		path metatlas_bed
 	output:
-		path("*read_summary.tsv.gz")
+		path("*read_met.tsv.gz")
 	script:
 	"""
-	#concatentate to data frame
-	set -- *.metatlas.bed.gz
-	{
-	zcat "\$1" | awk '{print \$1,\$4}'; shift
-	for file do
-	    zcat "\$file" | awk '{print \$4}' | sed '1d'
-	done
-	} | gzip > metatlas.read_summary.tsv.gz
-
-
+	python /src/bed_merge.py \\
+	--feat_name met_atlas \\
+	--working_dir "."
+	
 	"""
 }
 
@@ -440,6 +435,10 @@ bsub -Is -W 36:00 -q long -n 10 -M 100 -R rusage[mem=100] /bin/bash
 
 #to remove metatlas process scratch
 rf -rf $(find /rsrch4/scratch/genetics/rmulqueen/met_work/ -type f -name "*read.bed.gz" | awk 'FS="/" {print $1"/"$2"/"$3}' -)
+
+mkdir -p /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/postprocessing/sc_bam
+for i in $(find . -type f -name "*sorted.bam" | awk 'FS="/" {print $1"/"$2"/"$3"/"$4}' -);
+do mv $i /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/postprocessing/sc_bam; done
 
 #load modules
 module load nextflow/23.04.3
