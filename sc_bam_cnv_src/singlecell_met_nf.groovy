@@ -8,7 +8,9 @@ params.readcountfilter = 100000
 params.projectdir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
 params.genes_bed="${params.refdir}/grch38/filteredGTF/GRCh38_transcriptsOnly.gtf"
 params.metatlas_bed="${params.refdir}/met_atlas.hg38.feat.bed"
+params.multiome_atac_bed="${params.refdir}/multiome_bc.marker_atac_peaks.bed"
 params.genome_length="${params.refdir}/grch38/genome.txt"
+params.bismark_ref="${params.refdir}/grch38/"
 params.src_dir="${params.projectdir}/src/"
 params.out_dir="${params.scalemethylout}"
 
@@ -24,6 +26,7 @@ log.info """
 		Out directory : ${params.out_dir}
 		Genes Bed : ${params.genes_bed}
 		Met Atlas Bed : ${params.metatlas_bed}
+		Multiome ATAC Bed : ${params.multiome_atac_bed}
 		Feature to summarize over : ${params.feat}
 		CNV Calling : ${params.cnv_call}
 		================================================
@@ -41,7 +44,7 @@ process SPLIT_GROUPED_BAM {
 	input:
 		path bams
 	output:
-		path("*.sorted.bam"), optional: true
+		tuple path("*.readcount.tsv"),path("*.sorted.bam"), optional: true
 	script:
 	"""
 	bam_name="${bams}"
@@ -72,7 +75,98 @@ process SPLIT_GROUPED_BAM {
     """
 }
 
+process SPLIT_GROUPED_FASTQ { 
+	publishDir "${params.scalemethylout}/postprocessing/sc_fq", mode: 'copy', overwrite: true
+	// Generate a count per grouped fastq and pass list to filter down to single cells.
+	// Note this requires both R1 and R2 to pass thresholds for each cell, which shouldn't be a problem really.
+	maxForks 40
+	cpus 2
+	label 'cnv'
 
+	input:
+		tuple val(sampleid),path(fq1),path(fq2)
+	output:
+		tuple path("*-R1.fq.gz"),path("*-R2.fq.gz"), optional: true
+
+	script:
+	"""
+	fq_name="${sampleid}"
+	export cellline=\$(echo \$fq_name | cut -d \'.\' -f 1 )
+	export well=\$(echo \$fq_name | cut -d \'.\' -f 2 | cut -d \'_\' -f 1)
+
+	#count fq1 and use to filter possible cell ids
+	zcat ${fq1} \\
+	| grep "^@" \\
+	| awk '{a=substr(\$1,2);split(a,b,":");print b[1]}' \\
+	| sort \\
+	| uniq -c \\
+	| sort -k1,1n \\
+	| awk \'\$1>${params.readcountfilter} {print \$0}\' > \${cellline}.\${well}.readcount.tsv
+
+	#split fastq by cell ides
+	split_fastq() {
+	test=\$1
+	idx=\$(echo \$test | cut -d \' \' -f 2 )
+	outidx=\$(echo \$idx | sed -e \'s/+/_/g\' -)
+	zcat ${fq1} | grep -A 3 "^@\${idx}" | gzip > \${cellline}.\${well}.\${outidx}-R1.fq.gz
+	zcat ${fq2} | grep -A 3 "^@\${idx}" | gzip > \${cellline}.\${well}.\${outidx}-R2.fq.gz
+	}
+	export -f split_fastq
+    
+	parallel -j ${task.cpus} -a \${cellline}.\${well}.readcount.tsv split_fastq
+    """
+}
+
+
+process BISMARK_REALIGN { 
+	publishDir "${params.scalemethylout}/postprocessing/bismark/sc_bam", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.bismark_ref}:/ref/,${workflow.workDir}"
+	maxForks 40
+	cpus 1
+	label 'allcool'
+
+	input:
+		tuple path(fq1),path(fq2)
+	output:
+		path("*dedup.bam")
+	script:
+	"""
+	source activate bismark_env
+
+	basename=\$(echo "${fq1.baseName}" | sed 's/.\\{6\\}\$//')
+	bismark \\
+	--temp_dir . \\
+	--basename \${basename} \\
+	--genome /ref/ \\
+	-1 ${fq1} \\
+	-2 ${fq2}
+
+	deduplicate_bismark \\
+	--paired \\
+	--bam \\
+	--outfile \${basename}.dedup.bam \\
+	\${basename}.bam
+    """
+}
+
+process BISMARK_TO_ALLCOOL {
+	publishDir "${params.scalemethylout}/postprocessing/bismark/sc_allcool", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.bismark_ref}:/ref/"
+	label 'allcool'
+	
+	input:
+		path(bam)
+	output:
+		path("*allc")
+	script:
+	"""
+	source activate allcool_env 
+	allcools bam-to-allc \\
+	--reference_fasta /ref/Homo_sapiens.GRCh38.dna.primary_assembly.fa \\
+	--bam_path ${bam} \\
+	--output_path .
+	"""
+}
 process BAM_TO_BED_MET { 
 	// Generate a bed file with read start-end mC count and methylation level
 	//Theory here is that cell types have CGI which define differences, from the methylation atlas paper, so it should be at read level
@@ -271,6 +365,7 @@ process SUMMARIZE_CG_OVER_BED {
 	//publishDir "${params.scalemethylout}/cg_dataframes", mode: 'copy', overwrite: true, pattern: "*.tsv.gz"
 	containerOptions "--bind ${params.src_dir}:/src/,${params.scalemethylout}"
 	label 'celltype'
+	maxForks 20 //limiting maxForks for memory overlap (especially for atac peaks/ 5kb windows)
 
 	input:
 		path cov_folder
@@ -370,6 +465,9 @@ workflow {
 		def bams = 
 		Channel.fromPath("${params.scalemethylout}/bamDeDup/*/*bam")
 
+		def fastqs = 
+		Channel.fromFilePairs("${params.scalemethylout}/fastq/*/*_R{1,2}_*.fastq.gz",flat: true)
+
 		def covs = 
 		Channel.fromPath("${params.scalemethylout}/cg_sort_cov/*/*chroms.sort/", type: 'dir')
 
@@ -378,51 +476,65 @@ workflow {
 		met_in = meta_data | collect
 
 	/* RUN CNV PROFILING ON CNVS */	
+		fastqs \
+		| SPLIT_GROUPED_FASTQ \
+		| flatten | toSortedList | collate( 2 ) | view
+		//| BISMARK_REALIGN \
+		//| BISMARK_TO_ALLCOOL
 
-		if( "${params.cnv_call}" == "true" ) {
-			sorted_bams = 
-			SPLIT_GROUPED_BAM(bams)
+		
 
-			scbam_dir = sorted_bams | collect
-			RUN_COPYKIT(scbam_dir)
+	// 	if( "${params.cnv_call}" == "true" ) {
+	// 		sorted_bams = 
+	// 		SPLIT_GROUPED_BAM(bams)
+
+	// 		scbam_dir = sorted_bams | collect
+	// 		RUN_COPYKIT(scbam_dir)
 
 
-			//Summarize CG over reads
-			cg_beds=sorted_bams | flatten | BAM_TO_BED_MET
-			BED_MET_ATLAS_OVERLAP(cg_beds,"${params.metatlas_bed}") | collect | BED_MET_ATLAS_SUMMARY
+	// 		//Summarize CG over reads
+	// 		cg_beds=sorted_bams | flatten | BAM_TO_BED_MET
+	// 		BED_MET_ATLAS_OVERLAP(cg_beds,"${params.metatlas_bed}") | collect | BED_MET_ATLAS_SUMMARY
 
-		}
+	// 	}
 
-	/* GENERATE CLUSTERS AND GENE SUMMARY WINDOWS FOR CELL TYPE ANALYSIS */
+	// /* GENERATE CLUSTERS AND GENE SUMMARY WINDOWS FOR CELL TYPE ANALYSIS */
 
-		//Summarize CG at bp specificity
-		if( "${params.feat}" == "5kb" ) {
-			fiftykb_bed = MAKE_5KB_BED("${params.genome_length}")
-			fiftykb_out =
-			SUMMARIZE_CG_OVER_BED(covs, fiftykb_bed,"${params.feat}",1) \
-			| collect
-			MERGED_SUMMARIES(fiftykb_out,"${params.feat}")
-		}
+	// 	//Summarize CG at bp specificity
+	// 	if( "${params.feat}" == "5kb" ) {
+	// 		fiftykb_bed = MAKE_5KB_BED("${params.genome_length}")
+	// 		fiftykb_out =
+	// 		SUMMARIZE_CG_OVER_BED(covs, fiftykb_bed,"${params.feat}",1) \
+	// 		| collect
+	// 		MERGED_SUMMARIES(fiftykb_out,"${params.feat}")
+	// 	}
 
-		else if( "${params.feat}" == "genebody" ) {
-			gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
-			genebody_out = 
-			SUMMARIZE_CG_OVER_BED(covs, gene_bed,"${params.feat}",5) \
-			| collect
-			MERGED_SUMMARIES(genebody_out,"${params.feat}")
-		}
+	// 	else if( "${params.feat}" == "genebody" ) {
+	// 		gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
+	// 		genebody_out = 
+	// 		SUMMARIZE_CG_OVER_BED(covs, gene_bed,"${params.feat}",5) \
+	// 		| collect
+	// 		MERGED_SUMMARIES(genebody_out,"${params.feat}")
+	// 	}
 
-		else if( "${params.feat}" == "metatlas" ) {
-			metatlas_bed = MAKE_METATLAS_BED("${params.metatlas_bed}")
-			metatlas_out = 
-			SUMMARIZE_CG_OVER_BED(covs, metatlas_bed,"${params.feat}",1) \
-			| collect
-			MERGED_SUMMARIES(metatlas_out,"${params.feat}")
-		}
+	// 	else if( "${params.feat}" == "metatlas" ) {
+	// 		metatlas_bed = MAKE_METATLAS_BED("${params.metatlas_bed}")
+	// 		metatlas_out = 
+	// 		SUMMARIZE_CG_OVER_BED(covs, metatlas_bed,"${params.feat}",1) \
+	// 		| collect
+	// 		MERGED_SUMMARIES(metatlas_out,"${params.feat}")
+	// 	}
 
-		//MAKE_FINAL_SEURATOBJ(hundokb_out,genebody_out,met_in)
+	// 	else if( "${params.feat}" == "atacpeaks" ) {
+	// 		atac_bed = MAKE_METATLAS_BED("${params.multiome_atac_bed}")
+	// 		atac_out = 
+	// 		SUMMARIZE_CG_OVER_BED(covs, atac_bed,"${params.feat}",1) \
+	// 		| collect
+	// 		MERGED_SUMMARIES(atac_out,"${params.feat}")
+	// 	}
+	// 	//MAKE_FINAL_SEURATOBJ(hundokb_out,genebody_out,met_in)
 
-		//tf_bed = MAKE_TF_BED
+	// 	//tf_bed = MAKE_TF_BED
 
 }
 

@@ -1,3 +1,4 @@
+# Prepare genome reference and working environment
 ```bash
 https://lhqing.github.io/ALLCools/start/installation.html
 mamba env create -f allcools_env.yaml
@@ -10,10 +11,13 @@ mamba env create -f mapping_env.yaml #yaml in /volumes/seq/projects/metACT/src
 conda activate mapping
 pip install cemba-data
 
-bismark_genome_preparation --verbose /volumes/seq/projects/metACT/ref/grch38
+bsub -Is -W 36:00 -q long -n 10 -M 100 -R rusage[mem=100] /bin/bash
+conda activate mapping
+bismark_genome_preparation --verbose /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref/grch38
 
 
 ```
+
 
 Generate allc files from single cell bam files
 ```bash

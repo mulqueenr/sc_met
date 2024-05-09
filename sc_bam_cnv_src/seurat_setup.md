@@ -13,12 +13,16 @@ singularity shell \
 Load data
 ```R
 #singularity shell --bind /volumes/seq/projects/metACT ~/multiome_bc.sif 
-library(Seurat)
+library(Seurat) 
 library(data.table)
 library(ggplot2)
 library(patchwork)
 library(dplyr)
 library(org.Hs.eg.db)
+library(ComplexHeatmap)
+library(parallel)
+library(viridis)
+
 #LOAD IN REFERENCE HBCA 
 #ref<-readRDS("/volumes/seq/projects/metACT/ref/hbca.rds")
 setwd("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2")
@@ -57,6 +61,86 @@ plot_feat_coverage<-function(meta,win,feat_counts,feat_dat,feat_rate) {
 	plt5<-ggplot(windows_cov_per_cell)+geom_density(aes(x=window_cov))
 	ggsave(plt1/plt2/plt3/plt4/plt5,file=paste0("cells_cov_per_window",win,".pdf"))
 }
+
+count_met_atlas_dmr<-function(counts,x){
+	tmp<-counts[,x]
+	cell_dmr<-melt(table(unlist(lapply(
+		ref_bed[ref_bed$names %in% names(tmp[which(tmp<0.85)]),]$celltype, 
+		function(x) strsplit(x,",")[[1]]))))
+	colnames(cell_dmr)<-c("celltype","hypo_count")
+	cell_dmr$cell<-colnames(counts)[x]
+	return(cell_dmr)
+}
+
+
+cell_subtyping<-function(ref_bed="/volumes/seq/projects/metACT/ref/met_atlas.hg38.bed",cpus=50){
+		#read in reference bed
+		ref_bed<-read.table(ref_bed)
+		colnames(ref_bed)<-c("chr","start","end","annot","gene","celltype")
+		ref_bed$names<-paste(ref_bed$chr,ref_bed$start,ref_bed$end,sep="-")
+		#get raw binarized data
+		counts<-GetAssayData(seurat_obj,layer="data",assay="met_metatlas")
+		cell_dmr<-mclapply(1:ncol(counts), function(x) count_met_atlas_dmr(counts=counts,x=x),mc.cores=cpus)
+		cell_dmr<-do.call("rbind",cell_dmr)
+		cell_dmr<-dcast(celltype~cell,data=cell_dmr,value.var="hypo_count")
+		row.names(cell_dmr)<-cell_dmr$celltype
+		cell_dmr<-cell_dmr[2:ncol(cell_dmr)]
+
+		#normalize data frame
+		tester<-as.data.frame(cell_dmr)
+		#by total cell coverage
+		cell_counts<-colSums(GetAssayData(seurat_obj,layer="counts",assay="met_metatlas"),na.rm=T)
+		cell_counts<-cell_counts[colnames(tester)]
+		#by total 
+		total_celltype_dmr<-table(unlist(lapply(ref_bed$celltype, function(x) strsplit(x,",")[[1]])))
+		total_celltype_dmr<-total_celltype_dmr[row.names(tester)]
+
+		tester<-sweep(tester, 1, total_celltype_dmr, "/")
+		tester<-sweep(tester, 2, cell_counts, "/")
+		tester<-as.data.frame(scale(t(tester),center=F,scale=T))
+		row_annot<-rowAnnotation(diag = obj@meta.data[row.names(tester),]$sampleName,
+		    col = list(diag = c("HBCA-16R"="red","HBCA-83L"="purple","MCF10A"="orange","MCF7"="green","MDA-MB-231"="yellow")))
+		pdf("test3.pdf")
+		Heatmap(tester,
+			right_annotation=row_annot,
+			column_names_gp = gpar(fontsize = 5),
+			row_names_gp = gpar(fontsize = 0.5))
+		dev.off()
+
+		seurat_obj[["met_atlas_summary"]] <- CreateAssayObject(data=as.matrix(t(tester)))
+		seurat_obj<-SetAssayData(seurat_obj,new.data=as.matrix(t(tester)),layer="scale.data",assay="met_atlas_summary")
+
+
+		pc_dims=20
+		pc_dims_for_clustering=10
+		pal <- viridis(n = 20, option = "C", direction = 1)
+
+		#seurat_obj<-ScaleData(seurat_obj,assay="met_atlas_summary")
+		seurat_obj<-RunPCA(
+			seurat_obj,
+			features=row.names(GetAssayData(seurat_obj,layer="data",assay="met_atlas_summary")),
+			npcs=pc_dims,assay="met_atlas_summary")
+		plt4<-ElbowPlot(seurat_obj)+geom_vline(color="red",aes(xintercept=pc_dims_for_clustering))
+		ggsave(plt4,file="metatlas_pca.elbow.pdf")
+		
+		seurat_obj <- FindNeighbors(object = seurat_obj, reduction = 'pca', dims = 2:pc_dims_for_clustering,graph.name="pca_snn")
+		seurat_obj <- FindClusters(object = seurat_obj, verbose = TRUE, graph.name="pca_snn", resolution=0.5 ) 
+
+		seurat_obj<-RunUMAP(seurat_obj,assay="met_atlas_summary",dims=2:pc_dims_for_clustering)
+		plt1<-DimPlot(seurat_obj,reduction="umap",group.by=c("sampleName","seurat_clusters"))
+		ggsave(plt1,file="metatlas_summary3.umap.pdf",width=20,height=10)
+
+		#seurat_obj<-ScaleData(seurat_obj,assay="met_atlas_summary")
+		DefaultAssay(seurat_obj)<-"met_atlas_summary"
+		features=factor(c("Blood-Granul","Blood-Mono+Macro","Blood-NK","Blood-T","Eryth-prog","Breast-Basal-Ep","Breast-Luminal-Ep","Endothel","Smooth-Musc","Adipocytes"),levels=c("Blood-Granul","Blood-Mono+Macro","Blood-NK","Blood-T","Eryth-prog","Breast-Basal-Ep","Breast-Luminal-Ep","Endothel","Smooth-Musc","Adipocytes"))
+
+		plt2<-FeaturePlot(seurat_obj,features=c("Blood-Granul","Blood-Mono+Macro","Blood-NK","Blood-T","Eryth-prog","Breast-Basal-Ep","Breast-Luminal-Ep","Endothel","Smooth-Musc","Adipocytes"),order=T)* DarkTheme()
+		ggsave(plt2,file=paste("metatlas_summary.feat7.umap.pdf",sep="_"),width=40,height=40)
+
+		Idents(seurat_obj)<-seurat_obj$seurat_clusters#run on predicted IDs instead
+		plt3<-DotPlot(seurat_obj,assay="met_atlas_summary",features=features,scale=T,cluster.idents=T,dot.scale = 20)+ RotatedAxis()+ scale_color_gradient2(low="#313695",mid="#ffffbf",high="#a50026",na.value = "white")
+		ggsave(plt3,file="metatlas_summary.feat2.dotplot.pdf",height=10,width=50,limitsize=FALSE)
+		}
 
 read_in_window<-function(
 	dir="/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2/cg_dataframes/",
@@ -99,8 +183,6 @@ read_in_window<-function(
 	print(paste0("Plotting feature coverage for ",win,"..."))
 	plot_feat_coverage(meta=meta,win=win,feat_counts=feat_counts,feat_dat=feat_dat,feat_rate=feat_rate)
 	assay_name=paste0("met_",win)
-
-
 	if(is.null(seurat_obj)){
 		print(paste0("Creating seurat object..."))
 		seurat_obj <- CreateSeuratObject(
@@ -117,7 +199,7 @@ read_in_window<-function(
 		seurat_obj <- SetAssayData(
 			object = seurat_obj, 
 			layer = "scale.data", 
-			new.data = as.matrix(feat_rate), 
+			new.data = as.matrix(feat_dat), 
 			assay=assay_name)
 		}
 	} else {
@@ -134,16 +216,20 @@ read_in_window<-function(
 		seurat_obj <- SetAssayData(
 			object = seurat_obj, 
 			layer = "scale.data", 
-			new.data = as.matrix(feat_rate), 
+			new.data = as.matrix(feat_dat), 
 			assay=assay_name)
 		}
-
+	}
+	if(win=="metatlas"){ 
+		met_celltyping(seurat_obj)
 	}
 	return(seurat_obj)
 }
 
 #CREATE SEURAT OBJECT
 obj<-read_in_window(win="metatlas",meta=meta)
+
+#continued seurat object creation
 obj<-read_in_window(win="genebody",meta=meta,seurat_obj=obj)
 saveRDS(obj,file="met.metatlas.Rds")
 
@@ -151,7 +237,10 @@ obj<-read_in_window(win="100kb",meta=meta)
 obj<-read_in_window(win="250kb",meta=meta)
 obj<-read_in_window(win="50kb",meta=meta)
 
-saveRDS(obj,file="met.Rds")
+#5kb seurat object
+obj<-read_in_window(win="5kb",meta=meta)
+obj<-read_in_window(seurat_obj=obj,win="metatlas",meta=meta)
+saveRDS(obj,file="met.5kb.Rds")
 
 
 ```
@@ -517,7 +606,7 @@ setwd("/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2")
 obj<-readRDS(file="met.metatlas.Rds")
 
 
-hbca_markers<-readRDS(file="hbca_markers.rds")
+hbca_markers<-readRDS(file="/volumes/seq/projects/metACT/ref/hbca_markers.rds")
 top_5<-as.data.frame(hbca_markers %>% arrange(-desc(p_val_adj)) %>% group_by(cluster) %>% slice_head(n = 10)%>%ungroup)
 top_5<-top_5[!duplicated(top_5$gene),]
 
@@ -603,6 +692,7 @@ runNMF<-function(Object,
 	Idents(Object)<-Object$seurat_clusters
 	Object[["met_genebody"]]@data[which(is.na(Object[["met_genebody"]]@data),arr.ind = TRUE)] <- 1.0
 
+	Idents(Object)<-Object$predicted.id #run on predicted IDs instead
 	plt2<-DotPlot(Object,assay="met_genebody",features=hbca_snmarkers,scale=T,cluster.idents=T,dot.scale = 20)+ RotatedAxis()+ scale_color_gradient2(low="#313695",mid="#ffffbf",high="#a50026",na.value = "white")
 	ggsave(plt2,file="hbca_umap_predictedcells_dotplot.pdf",height=10,width=50,limitsize=FALSE)
 
@@ -621,17 +711,17 @@ hbca<-subset(obj, cells=Cells(obj)[startsWith(prefix="HBCA",Cells(obj))])
 
 #Label transfer
 ref<-readRDS("/volumes/seq/projects/metACT/ref/hbca.rds")
-anchors <- FindTransferAnchors(reference = ref, query = out_hbca, reference.assay ="RNA", query.assay = "met_genebody", reduction="cca") # find anchors
+anchors <- FindTransferAnchors(reference = ref, query = hbca, reference.assay ="RNA", query.assay = "met_genebody", reduction="cca") # find anchors
 predictions <- TransferData(anchorset = anchors,refdata = ref$celltype,weight.reduction="cca")
 hbca <- AddMetaData(object = hbca, metadata = predictions)
 
 #run NMF for HBCA data
+out_hbca<-runNMF(Object=hbca,assay="met_metatlas",outPrefix="hbca",nfeat=10000,k_in=10,hbca_snmarkers=hbca_snmarkers)
+out_hbca<-runNMF(Object=hbca,assay="met_genebody",outPrefix="hbca",nfeat=10000,k_in=10,hbca_snmarkers=hbca_snmarkers)
+
 out_hbca<-runNMF(Object=hbca,assay="met_250kb",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
 out_hbca<-runNMF(Object=hbca,assay="met_100kb",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
 out_hbca<-runNMF(Object=hbca,assay="met_50kb",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
-out_hbca<-runNMF(Object=hbca,assay="met_genebody",outPrefix="hbca",nfeat=10000,k_in=5,hbca_snmarkers=hbca_snmarkers)
-
-
 
 
 ```
