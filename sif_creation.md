@@ -395,7 +395,8 @@ git \
 default-jre \
 unzip \
 zlib1g-dev \
-parallel
+parallel \
+nano
 
 # download, install, and update miniconda3
 wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
@@ -466,6 +467,10 @@ zarr \
 && mkdir -p /opt/etc/bashrc \
 && cp ~/.bashrc /opt/etc/bashrc
 pip install papermill imblearn allcools
+pip install zarr
+pip install dask
+pip install numba
+pip install matplotlib=3.6
 
 %labels
     Author Ryan Mulqueen
@@ -475,7 +480,7 @@ pip install papermill imblearn allcools
 ```
 
 ```bash
-sudo singularity build allcool.sif allcool.def #trying on geo
+singularity build --fakeroot allcool.sif allcool.def #trying on geo
 sudo singularity shell allcool.sif
 ```
 

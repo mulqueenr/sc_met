@@ -108,8 +108,8 @@ process SPLIT_GROUPED_FASTQ {
 	test=\$1
 	idx=\$(echo \$test | cut -d \' \' -f 2 )
 	outidx=\$(echo \$idx | sed -e \'s/+/_/g\' -)
-	zcat ${fq1} | grep -A 3 "^@\${idx}" | gzip > \${cellline}.\${well}.\${outidx}-R1.fq.gz
-	zcat ${fq2} | grep -A 3 "^@\${idx}" | gzip > \${cellline}.\${well}.\${outidx}-R2.fq.gz
+	zcat ${fq1} | grep -A 3 "^@\${idx}" | grep -v "^\\-\\-\$"| gzip > \${cellline}.\${well}.\${outidx}-R1.fq.gz
+	zcat ${fq2} | grep -A 3 "^@\${idx}" | grep -v "^\\-\\-\$"| gzip > \${cellline}.\${well}.\${outidx}-R2.fq.gz
 	}
 	export -f split_fastq
     
@@ -128,45 +128,116 @@ process BISMARK_REALIGN {
 	input:
 		tuple path(fq1),path(fq2)
 	output:
-		path("*dedup.bam")
+		path("*deduplicated.bam")
 	script:
 	"""
 	source activate bismark_env
 
 	basename=\$(echo "${fq1.baseName}" | sed 's/.\\{6\\}\$//')
+	cutadapt \
+	-a CTGCGACGGCTGC \
+	-A CTGTCTCTTAT \
+	-u 8 \
+	-U 8 \
+	-o out1.fq.gz \
+	-p out2.fq.gz \
+	${fq1} \
+	${fq2}
+
 	bismark \\
+	--pbat \\
 	--temp_dir . \\
 	--basename \${basename} \\
 	--genome /ref/ \\
-	-1 ${fq1} \\
-	-2 ${fq2}
+	-1 out1.fq.gz \\
+	-2 out2.fq.gz
 
 	deduplicate_bismark \\
 	--paired \\
 	--bam \\
-	--outfile \${basename}.dedup.bam \\
-	\${basename}.bam
+	--outfile \${basename} \\
+	\${basename}_pe.bam
     """
 }
 
 process BISMARK_TO_ALLCOOL {
-	publishDir "${params.scalemethylout}/postprocessing/bismark/sc_allcool", mode: 'copy', overwrite: true
 	containerOptions "--bind ${params.bismark_ref}:/ref/"
 	label 'allcool'
 	
 	input:
 		path(bam)
 	output:
-		path("*allc")
+		path("*{.gz,.gz.tbi}")
 	script:
 	"""
 	source activate allcool_env 
+
+	bam_name="${bam}"
+	export cellline=\$(echo \$bam_name | cut -d \'.\' -f 1 )
+	export well=\$(echo \$bam_name | cut -d \'.\' -f 2 )
+	export idx=\$(echo \$bam_name | cut -d \'.\' -f 3 )
+	export out_name=\"\${cellline}.\${well}.\${idx}\"
+
+	samtools sort \\
+	-o \${out_name}.sorted.bam \\
+	${bam}
+
 	allcools bam-to-allc \\
 	--reference_fasta /ref/Homo_sapiens.GRCh38.dna.primary_assembly.fa \\
-	--bam_path ${bam} \\
-	--output_path .
+	--bam_path \${out_name}.sorted.bam  \\
+	--output_path \${out_name}
 	"""
 }
+
+
+process ALLCOOL_TO_DATASET {
+	publishDir "${params.scalemethylout}/postprocessing/bismark/sc_allcool/", mode: 'copy', overwrite: true
+	containerOptions "--bind ${params.refdir}:/ref/"
+	label 'allcool'
+	cpus 50
+
+	input:
+		path(allc)
+	output:
+		path("*")
+	script:
+	"""
+	source activate allcool_env 
+
+	#move each sample into subdir and make a table
+	for i in *.gz; do 
+	out_name=\${i::-3};
+	mkdir -p \${out_name};
+	mv \${out_name}.gz \${out_name}.gz.tbi \${out_name}/;
+	echo \${out_name}\$'\t'./\${out_name}/\${out_name}.gz; done > allc_table.tsv
+
+	allcools generate-dataset  \\
+	--allc_table allc_table.tsv \\
+	--output_path data.mcds \\
+	--chrom_size_path /ref/allcool_regions/genome.txt \\
+	--obs_dim cell  \\
+	--cpu ${task.cpus} \\
+	--chunk_size 30 \\
+	--regions chrom100k 100000 \\
+	--quantifiers chrom100k count CGN \\
+	--regions chrom5k 5000 \\
+	--quantifiers chrom5k count CGN \\
+	--regions transcripts /ref/allcool_regions/GRCh38_transcripts.longest.bed.gz \\
+	--quantifiers transcripts count CGN \\
+	--regions CGI /ref/allcool_regions/grch38.cgi.bed.gz \\
+	--quantifiers CGI count CGN \\
+	--regions METATLAS /ref/allcool_regions/met_atlas.hg38.feat.bed.gz \\
+	--quantifiers METATLAS count CGN \\
+	--regions ATAC /ref/allcool_regions/multiome_bc.marker_atac_peaks.bed.gz \\
+	--quantifiers ATAC count CGN \\
+	--quantifiers CGI hypo-score CGN cutoff=0.9 \\
+	--quantifiers ATAC hypo-score CGN cutoff=0.9 \\
+	--quantifiers METATLAS hypo-score CGN cutoff=0.9
+	
+	"""
+
+}
+
 process BAM_TO_BED_MET { 
 	// Generate a bed file with read start-end mC count and methylation level
 	//Theory here is that cell types have CGI which define differences, from the methylation atlas paper, so it should be at read level
@@ -478,63 +549,65 @@ workflow {
 	/* RUN CNV PROFILING ON CNVS */	
 		fastqs \
 		| SPLIT_GROUPED_FASTQ \
-		| flatten | toSortedList | collate( 2 ) | view
-		//| BISMARK_REALIGN \
-		//| BISMARK_TO_ALLCOOL
+		| flatten | toSortedList | flatten | collate( 2 ) \
+		| BISMARK_REALIGN \
+		| BISMARK_TO_ALLCOOL \
+		| collect \
+		| ALLCOOL_TO_DATASET
 
 		
 
-	// 	if( "${params.cnv_call}" == "true" ) {
-	// 		sorted_bams = 
-	// 		SPLIT_GROUPED_BAM(bams)
+	// if( "${params.cnv_call}" == "true" ) {
+	//  		sorted_bams = 
+	//  		SPLIT_GROUPED_BAM(bams)
 
-	// 		scbam_dir = sorted_bams | collect
-	// 		RUN_COPYKIT(scbam_dir)
+	//  		scbam_dir = sorted_bams | collect
+	//  		RUN_COPYKIT(scbam_dir)
 
 
-	// 		//Summarize CG over reads
-	// 		cg_beds=sorted_bams | flatten | BAM_TO_BED_MET
-	// 		BED_MET_ATLAS_OVERLAP(cg_beds,"${params.metatlas_bed}") | collect | BED_MET_ATLAS_SUMMARY
+	//  		//Summarize CG over reads
+	//  		cg_beds=sorted_bams | flatten | BAM_TO_BED_MET
+	//  		BED_MET_ATLAS_OVERLAP(cg_beds,"${params.metatlas_bed}") | collect | BED_MET_ATLAS_SUMMARY
 
-	// 	}
+	//  	}
 
-	// /* GENERATE CLUSTERS AND GENE SUMMARY WINDOWS FOR CELL TYPE ANALYSIS */
+	//  /* GENERATE CLUSTERS AND GENE SUMMARY WINDOWS FOR CELL TYPE ANALYSIS */
 
-	// 	//Summarize CG at bp specificity
-	// 	if( "${params.feat}" == "5kb" ) {
-	// 		fiftykb_bed = MAKE_5KB_BED("${params.genome_length}")
-	// 		fiftykb_out =
-	// 		SUMMARIZE_CG_OVER_BED(covs, fiftykb_bed,"${params.feat}",1) \
-	// 		| collect
-	// 		MERGED_SUMMARIES(fiftykb_out,"${params.feat}")
-	// 	}
+	//  	//Summarize CG at bp specificity
+	//  	if( "${params.feat}" == "5kb" ) {
+	//  		fiftykb_bed = MAKE_5KB_BED("${params.genome_length}")
+	//  		fiftykb_out =
+	//  		SUMMARIZE_CG_OVER_BED(covs, fiftykb_bed,"${params.feat}",1) \
+	//  		| collect
+	//  		MERGED_SUMMARIES(fiftykb_out,"${params.feat}")
+	//  	}
 
-	// 	else if( "${params.feat}" == "genebody" ) {
-	// 		gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
-	// 		genebody_out = 
-	// 		SUMMARIZE_CG_OVER_BED(covs, gene_bed,"${params.feat}",5) \
-	// 		| collect
-	// 		MERGED_SUMMARIES(genebody_out,"${params.feat}")
-	// 	}
+	//  	else if( "${params.feat}" == "genebody" ) {
+	//  		gene_bed = MAKE_TRANSCRIPT_BED("${params.genes_bed}")
+	//  		genebody_out = 
+	//  		SUMMARIZE_CG_OVER_BED(covs, gene_bed,"${params.feat}",5) \
+	//  		| collect
+	//  		MERGED_SUMMARIES(genebody_out,"${params.feat}")
+	//  	}
 
-	// 	else if( "${params.feat}" == "metatlas" ) {
-	// 		metatlas_bed = MAKE_METATLAS_BED("${params.metatlas_bed}")
-	// 		metatlas_out = 
-	// 		SUMMARIZE_CG_OVER_BED(covs, metatlas_bed,"${params.feat}",1) \
-	// 		| collect
-	// 		MERGED_SUMMARIES(metatlas_out,"${params.feat}")
-	// 	}
+	//  	else if( "${params.feat}" == "metatlas" ) {
+	//  		metatlas_bed = MAKE_METATLAS_BED("${params.metatlas_bed}")
+	//  		metatlas_out = 
+	//  		SUMMARIZE_CG_OVER_BED(covs, metatlas_bed,"${params.feat}",1) \
+	//  		| collect
+	//  		MERGED_SUMMARIES(metatlas_out,"${params.feat}")
+	//  	}
 
-	// 	else if( "${params.feat}" == "atacpeaks" ) {
-	// 		atac_bed = MAKE_METATLAS_BED("${params.multiome_atac_bed}")
-	// 		atac_out = 
-	// 		SUMMARIZE_CG_OVER_BED(covs, atac_bed,"${params.feat}",1) \
-	// 		| collect
-	// 		MERGED_SUMMARIES(atac_out,"${params.feat}")
-	// 	}
-	// 	//MAKE_FINAL_SEURATOBJ(hundokb_out,genebody_out,met_in)
+	//  	else if( "${params.feat}" == "atacpeaks" ) {
+	//  		atac_bed = MAKE_METATLAS_BED("${params.multiome_atac_bed}")
+	//  		atac_out = 
+	//  		SUMMARIZE_CG_OVER_BED(covs, atac_bed,"${params.feat}",1) \
+	//  		| collect
+	//  		MERGED_SUMMARIES(atac_out,"${params.feat}")
+	//  	}
+	//  	//MAKE_FINAL_SEURATOBJ(hundokb_out,genebody_out,met_in)
 
-	// 	//tf_bed = MAKE_TF_BED
+	//  	//tf_bed = MAKE_TF_BED
 
 }
 
@@ -548,13 +621,6 @@ bsub -Is -W 36:00 -q long -n 10 -M 100 -R rusage[mem=100] /bin/bash
 #to remove metatlas process scratch
 rf -rf $(find /rsrch4/scratch/genetics/rmulqueen/met_work/ -type f -name "*read.bed.gz" | awk 'FS="/" {print $1"/"$2"/"$3}' -)
 
-mkdir -p /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/postprocessing/sc_bam
-for i in $(find . -type f -name "*sorted.bam" | awk 'FS="/" {print $1"/"$2"/"$3"/"$4}' -);
-do mv $i /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/postprocessing/sc_bam; done
-
-#load modules
-module load nextflow/23.04.3
-
 #set up environment variables 
 export SCRATCH="/rsrch4/scratch/genetics/rmulqueen"
 export projDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
@@ -562,24 +628,26 @@ export srcDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src"
 export refDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref"
 export sif="${srcDir}/copykit.sif"
 
+module load singularity 
 #call nextflow
-nextflow ${srcDir}/singlecell_met_nf.groovy \
---refdir $refDir \
--w ${SCRATCH}/met_work \
---scalemethylout ${projDir}/240205_RMMM_scalebiotest2 \
--resume
+#nextflow ${srcDir}/singlecell_met_nf.groovy \
+#--refdir $refDir \
+#-w ${SCRATCH}/met_work \
+#--scalemethylout ${projDir}/240205_RMMM_scalebiotest2 \
+#-resume
 
-cd /rsrch4/scratch/genetics/rmulqueen/met_work/c4/2ef5236657a57879d9e2c811c4b7aa
 export sif="${srcDir}/scmetR.sif"
 export sif="${srcDir}/copykit.sif"
+export sif="${srcDir}/allcool.sif"
 
 
-
+cd /rsrch4/scratch/genetics/rmulqueen/met_work/97/9842c46c89915a3a739d9f2bf5ec29
 singularity shell \
 --bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src:/src/ \
 --bind /rsrch4/scratch/genetics/rmulqueen/met_work \
 --bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2 \
 --bind /rsrch4/scratch/genetics/rmulqueen/work \
+--bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref/:/ref/ \
 $sif
 
 bsub -Is -W 4:00 -q transfer -n 10 -M 10 -R rusage[mem=10] /bin/bash
