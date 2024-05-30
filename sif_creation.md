@@ -381,8 +381,8 @@ From: ubuntu:latest
 export LC_ALL=C
 export PATH=/opt/miniconda3/bin:$PATH
 export PYTHONPATH=/opt/miniconda3/lib/python3.9/:$PYTHONPATH
+export PYTHONPATH=/opt/miniconda3/lib/python3.12/:$PYTHONPATH
 source /opt/etc/bashrc
-
 
 %post
 # update and install essential dependencies
@@ -454,7 +454,7 @@ pynndescent \
 pysam \
 pytables \
 scanpy \
-scikit-learn \
+scikit-learn=1.2.2 \
 seaborn \
 statsmodels \
 xarray \
@@ -462,15 +462,24 @@ yaml \
 zarr \
 && echo -e "#! /bin/bash\n\n# script to activate the conda environment" > ~/.bashrc \
 && conda init bash \
-&& echo -e "\nconda activate allcool_env" >> ~/.bashrc \
+&& echo -e "\nsource activate allcool_env" >> ~/.bashrc \
 && conda clean -y -a \
 && mkdir -p /opt/etc/bashrc \
 && cp ~/.bashrc /opt/etc/bashrc
-pip install papermill imblearn allcools
+conda install numba
+pip install anndata scanpy ALLCools xarray pybedtools dask leidenalg plotly imblearn openTSNE
+pip install papermill imblearn 
 pip install zarr
 pip install dask
 pip install numba
-pip install matplotlib=3.6
+pip install matplotlib==3.6
+conda install numba
+pip install tables
+pip install ctxcore
+pip install psutil
+pip install biopython
+pip install scikit-learn==1.2.2
+
 
 %labels
     Author Ryan Mulqueen
@@ -488,7 +497,6 @@ sudo singularity shell allcool.sif
 Use sftp to get images off cluster. Move to local computer > geo > seadragon2
 
 ```bash
-
 sftp -i ~/Downloads/newkey2.pem ubuntu@54.187.193.117
 get copykit.sif
 
@@ -509,4 +517,70 @@ get scmetR.sif
 
 ```bash
 #singularity shell --bind /rsrch4/home/genetics/rmulqueen/singularity/scmetR.sif
+```
+
+
+
+## Define the amethyst image to be created
+
+amethyst.def
+```bash
+Bootstrap: docker
+From: ubuntu:latest
+
+%environment
+	# set up all essential environment variables
+	export LC_ALL=C
+	export PATH=/opt/miniconda3/bin:$PATH
+	export PYTHONPATH=/opt/miniconda3/lib/python3.12/:$PYTHONPATH
+	export LC_ALL=C.UTF-8
+%post
+	# update and install essential dependencies
+	apt-get -y update
+	apt-get update && apt-get install -y automake \
+	build-essential \
+	bzip2 \
+	wget \
+	git \
+	default-jre \
+	unzip \
+	zlib1g-dev \
+	parallel \
+	libglpk40 \
+	gfortran
+
+	# download, install, and update miniconda3
+	wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
+	bash Miniconda3-latest-Linux-x86_64.sh -b -f -p /opt/miniconda3/
+	rm Miniconda3-latest-Linux-x86_64.sh
+
+	# install dependencies via conda
+	export PATH="/opt/miniconda3/bin:$PATH"
+	conda install -y -c conda-forge mamba 
+	mamba install -y -f bioconda::samtools #
+	mamba install -y -f bioconda::bedtools #
+	mamba install -y -f conda-forge::parallel #
+
+	#install R packages
+	mamba install -y -f conda-forge::r-base #=4.2
+	mamba install -y -f conda-forge::r-devtools
+	mamba install -y -f conda-forge::r-fnn
+	mamba install -y -f conda-forge::r-rmagic
+	mamba install -y -f conda-forge::r-rtsne
+	mamba install -y -f bioconda::r-seurat
+	mamba install -y -f bioconda::r-signac
+
+	R --slave -e 'devtools::install_github("lrylaarsdam/amethyst", ref = "dev")'
+Rtsne
+%labels
+	Author Ryan Mulqueen
+	Version v0.1
+	MyLabel Amethyst
+
+```
+
+```bash
+singularity build --fakeroot amethyst.sif amethyst.def #trying on geo
+
+
 ```

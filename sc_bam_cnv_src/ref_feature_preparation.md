@@ -1,3 +1,9 @@
+blacklist region
+```bash
+https://www.encodeproject.org/files/ENCFF356LFX/
+```
+
+
 make transcript bed
 ```bash
 gtf="/volumes/seq/projects/metACT/ref/grch38/filteredGTF/GRCh38_transcriptsOnly.gtf"
@@ -52,6 +58,8 @@ export -f merge_bed
 #perform liftOver
 #set up
 
+bsub -Is -W 2:00 -q short -n 10 -M 10 -R rusage[mem=10] /bin/bash
+dir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects"
 
 cd ${dir}/metact/src
 wget https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver
@@ -68,7 +76,7 @@ met_atlas.hg38.bed \
 met_atlas.hg19.unmapped.bed
 
 cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref
-awk 'OFS="\t" {print $1,$2,$3,$1"_"$2"_"$3}' met_atlas.hg38.bed > met_atlas.hg38.feat.bed
+awk 'OFS="\t" {print $1,$2,$3,$1"_"$2"_"$3}' met_atlas.hg38.bed |  sed 's/chr//g' | sort -k1,1 -k2,2n > met_atlas.hg38.feat.bed
 
 
 ```

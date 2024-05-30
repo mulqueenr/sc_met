@@ -1,0 +1,30 @@
+#BSUB -W 240:00
+#BSUB -q e80long
+#BSUB -n 70
+#BSUB -M 800
+#BSUB -R rusage[mem=800]
+#BSUB -o /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/250526_RMMM_scalebio_dcis/%J_postprocessing.log
+#BSUB -cwd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/250526_RMMM_scalebio_dcis
+#BSUB -u RMulqueen@mdanderson.org
+#BSUB -J 250526_RMMM_scalebio_dcis
+
+#load modules
+module load nextflow/23.04.3
+
+#set up environment variables
+export SCRATCH="/rsrch4/scratch/genetics/rmulqueen"
+export projDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact"
+export srcDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/src"
+export refDir="/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/ref"
+
+#set directory
+mkdir -p ./metatlas_nextflow
+cd ./metatlas_nextflow
+
+#call nextflow
+nextflow ${srcDir}/singlecell_met_nf.groovy \
+--refdir $refDir \
+-w ${SCRATCH}/met_work \
+--scalemethylout ${projDir}/250526_RMMM_scalebio_dcis \
+--cnv_call "TRUE" \
+-resume
