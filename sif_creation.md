@@ -523,10 +523,31 @@ get scmetR.sif
 
 ## Define the amethyst image to be created
 
-amethyst.def
+```bash
+singularity build --fakeroot --sandbox amethyst/ scmetR.sif #building off scmetR since conda downloads are now busted
+singularity shell --fakeroot --writable amethyst/
+#install R packages
+R --slave -e 'install.packages("Seurat",repos="http://cran.us.r-project.org")'
+R --slave -e 'install.packages("Signac",repos="http://cran.us.r-project.org")'
+R --slave -e 'install.packages("caret",repos="http://cran.us.r-project.org")'
+R --slave -e 'install.packages("furrr",repos="http://cran.us.r-project.org")'
+R --slave -e 'install.packages("randomForest",repos="http://cran.us.r-project.org")'
+R --slave -e 'install.packages("BiocManager", repos="http://cran.us.r-project.org")'
+R --slave -e 'BiocManager::install("rhdf5")'
+R --slave -e 'install.packages("umap",repos="http://cran.us.r-project.org")'
+R --slave -e 'devtools::install_github("lrylaarsdam/amethyst", ref = "dev")'
+
 ```bash
 Bootstrap: docker
 From: ubuntu:latest
+
+%environment
+# set up all essential environment variables
+export LC_ALL=C
+export PATH=/opt/miniconda3/bin:$PATH
+export PYTHONPATH=/opt/miniconda3/lib/python3.9/:$PYTHONPATH
+export PYTHONPATH=/opt/miniconda3/lib/python3.12/:$PYTHONPATH
+source /opt/etc/bashrc
 
 %environment
 	# set up all essential environment variables
@@ -534,48 +555,12 @@ From: ubuntu:latest
 	export PATH=/opt/miniconda3/bin:$PATH
 	export PYTHONPATH=/opt/miniconda3/lib/python3.12/:$PYTHONPATH
 	export LC_ALL=C.UTF-8
-%post
-	# update and install essential dependencies
-	apt-get -y update
-	apt-get update && apt-get install -y automake \
-	build-essential \
-	bzip2 \
-	wget \
-	git \
-	default-jre \
-	unzip \
-	zlib1g-dev \
-	parallel \
-	libglpk40 \
-	gfortran
 
-	# download, install, and update miniconda3
-	wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
-	bash Miniconda3-latest-Linux-x86_64.sh -b -f -p /opt/miniconda3/
-	rm Miniconda3-latest-Linux-x86_64.sh
 
-	# install dependencies via conda
-	export PATH="/opt/miniconda3/bin:$PATH"
-	conda install -y -c conda-forge mamba 
-	mamba install -y -f bioconda::samtools #
-	mamba install -y -f bioconda::bedtools #
-	mamba install -y -f conda-forge::parallel #
-
-	#install R packages
-	mamba install -y -f conda-forge::r-base #=4.2
-	mamba install -y -f conda-forge::r-devtools
-	mamba install -y -f conda-forge::r-fnn
-	mamba install -y -f conda-forge::r-rmagic
-	mamba install -y -f conda-forge::r-rtsne
-	mamba install -y -f bioconda::r-seurat
-	mamba install -y -f bioconda::r-signac
-
-	R --slave -e 'devtools::install_github("lrylaarsdam/amethyst", ref = "dev")'
-Rtsne
 %labels
-	Author Ryan Mulqueen
-	Version v0.1
-	MyLabel Amethyst
+    Author Ryan Mulqueen
+    Version v0.0
+    MyLabel Amethyst SIF
 
 ```
 
