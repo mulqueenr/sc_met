@@ -247,9 +247,6 @@ nextflow run ${scalebio_nf} \
 --samples ${runDir}/samples.csv \
 --outDir ${runDir} \
 --genome ${genome} \
---fastqOut true \
---trimOut true \
---bamOut true \
 --bamDedupOut true \
 --covOut true \
 --max_memory 300.GB \
@@ -267,9 +264,9 @@ bsub < scalemet.lsf
 ## Submit job.
 
 ```bash
-cd /rsrch4/home/genetics/rmulqueen/projects/metact/250526_RMMM_scalebio_dcis
+cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/250526_RMMM_scalebio_dcis
 rm -rf bsub.log
-bsub < 240205_scalemet.lsf
+bsub < scalemet.lsf
 ```
 
 <!-- 
