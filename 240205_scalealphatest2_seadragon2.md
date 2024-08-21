@@ -608,49 +608,40 @@ bsub < 240216_scalebio_scbam_split.lsf
 #    Run time :                                   13759 sec.
 #    Turnaround time :                            18382 sec.
 
-```
-
-
-
-```bash
+mkdir -p ./transfer_dat
+cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2
+cp -R ./report ./transfer_dat
+find ./cg_sort_cov -type l -exec bash -c 'cp -R "$(readlink -m "$0")" ./transfer_dat' {} \; #scale pipeline makes empty files, this throws errors for empty files (but can be ignored)
 bsub -Is -W 6:00 -q transfer -n 4 -M 10 -R rusage[mem=10] /bin/bash
-
-du -shL /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/cg_sort_cov/
-#13G cg_sort_cov/
-
-rsync -aLPvz \
-/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/cg_sort_cov \
-mulqueen@qcprpgeo.mdanderson.edu:/volumes/seq/projects/metACT/240205_RMMM_scalebiotest2
-```
+sftp mulqueen@qcprpgeo.mdanderson.edu
+cd ./projects/metact/240205_RMMM_scalebiotest2
+put -R transfer_dat
 
 
+premethyst for samples (run on geo)
 
 ```bash
-bsub -Is -W 6:00 -q interactive -n 10 -M 200 -R rusage[mem=200] /bin/bash
-singularity shell --bind /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact /rsrch4/home/genetics/rmulqueen/singularity/scmetR.sif
 
-cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/bamDeDup/sc_bams
-```
-```R
-library(copykit)
-library(BiocParallel)
-library(EnsDb.Hsapiens.v86)
-library(scquantum)
-register(MulticoreParam(progressbar = T, workers = 5), default = T)
-BiocParallel::bpparam()
+singularity shell \
+--bind $HOME \
+--bind /volumes/seq/projects/metACT/ \
+~/singularity/amethyst.sif
 
-dat <- runVarbin(".",
-                 remove_Y = TRUE,
-                 genome="hg38",
-                 is_paired_end=TRUE)
-## Making a sif file (see sif_creation.md) to do further copykit processing.
+export cg_sort="/volumes/USR2/Ryan/projects/metact/240205_RMMM_scalebiotest2/transfer_dat"
+export task_cpus=50
+mkdir -p ${cg_sort}/h5_files
+cd $cg_sort
+find $cg_sort -maxdepth 1 -type d -printf '%f\n' | grep "sort$" > cg_cov_folders.txt
 
-```
+premethyst() {
+outname=$(echo $1 | awk '{ gsub(".CG.chroms.sort", ""); print }')
+indir=$1
+echo $indir" "$outname
+python ~/src/premethyst_calls2h5.py $cg_sort/$indir ${cg_sort}/h5_files/${outname}
+}
 
-```R
+export -f premethyst
+parallel -j ${task_cpus} -a cg_cov_folders.txt premethyst
 
-
-setwd("/rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240205_RMMM_scalebiotest2/matrix")
-Matrix::readMM('.')
 
 ```

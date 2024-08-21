@@ -264,9 +264,14 @@ bsub < scalemet.lsf
 ## Submit job.
 
 ```bash
-cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/250526_RMMM_scalebio_dcis
+cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240526_RMMM_scalebio_dcis
 rm -rf bsub.log
 bsub < scalemet.lsf
+
+mkdir -p transfer_dat
+find ./cg_sort_cov -type l -exec bash -c 'cp -R "$(readlink -m "$0")" ./transfer_dat' {} \; #scale pipeline makes empty files, this throws errors for empty files (but can be ignored)
+cp -R ./report ./transfer_dat
+cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240526_RMMM_scalebio_dcis/cg_sort_cov
 ```
 
 <!-- 
@@ -290,3 +295,28 @@ The output (if any) is above this job summary.
 
  -->
 
+premethyst for DCIS samples (run on geo)
+```bash
+singularity shell \
+--bind $HOME \
+--bind /volumes/seq/projects/metACT/ \
+~/singularity/amethyst.sif
+
+export cg_sort="/volumes/USR2/Ryan/projects/metact/240526_RMMM_scalebio_dcis/transfer_dat/cg_sort_cov"
+export task_cpus=50
+mkdir -p ${cg_sort}/h5_files
+cd $cg_sort
+find $cg_sort -maxdepth 1 -type d -printf '%f\n' | grep "sort$" > cg_cov_folders.txt
+
+premethyst() {
+outname=$(echo $1 | awk '{ gsub(".CG.chroms.sort", ""); print }')
+indir=$1
+echo $indir" "$outname
+python ~/src/premethyst_calls2h5.py $cg_sort/$indir ${cg_sort}/h5_files/${outname}
+}
+
+export -f premethyst
+parallel -j ${task_cpus} -a cg_cov_folders.txt premethyst
+
+
+```
