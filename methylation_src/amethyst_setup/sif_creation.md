@@ -79,8 +79,8 @@ sudo chmod 666 /var/run/docker.sock
 
 # Build amethyst sandbox
 ```bash
-sudo singularity build --sandbox amethyst/ docker://ubuntu:latest
-sudo singularity shell --writable amethyst/
+sudo singularity build --sandbox amethyst2/ docker://ubuntu:latest
+sudo singularity shell --writable amethyst2/
 # %environment
 # set up all essential environment variables
 export LC_ALL=C
@@ -137,13 +137,24 @@ R --slave -e 'devtools::install_github("JinmiaoChenLab/Rphenograph")'
 R --slave -e 'devtools::install_github("KrishnaswamyLab/MAGIC/Rmagic")'
 R --slave -e 'devtools::install_github("lrylaarsdam/amethyst")'
 R --slave -e 'install.packages("pheatmap",repos="http://cran.us.r-project.org")'
+R --slave -e 'install.packages("plyr",repos="http://cran.us.r-project.org")'
+
+#install chromvar for motif enrichment in DMRs
+conda install conda-forge::gsl
+R --slave -e 'BiocManager::install(c("DirichletMultinomial"))'
+R --slave -e 'BiocManager::install(c("GO.db","motifmatchr","JASPAR2020","rGREAT"))'
+R --slave -e 'devtools::install_github("GreenleafLab/chromVARmotifs")'
+R --slave -e 'BiocManager::install("chromVAR")'
 
 #predownload the hg38 ref data
 wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_43/gencode.v43.annotation.gtf.gz
+
+#Add premethyst dependencies
+pip install h5py numpy pandas argparse
 ```
 
 ```bash
-sudo singularity build amethyst_pre.sif amethyst/ 
+sudo singularity build amethyst.sif amethyst2/ 
 ```
 
 # then build with proper env variables preloaded
@@ -151,7 +162,7 @@ sudo singularity build amethyst_pre.sif amethyst/
 amethyst.def
 ```bash
 Bootstrap: localimage
-From: /home/ubuntu/amethyst_pre.sif
+From: /home/ubuntu/amethyst.sif
 
 %environment
 # set up all essential environment variables
@@ -163,10 +174,11 @@ source /opt/etc/bashrc
 
 %files
   gencode.v43.annotation.gtf.gz /container_ref/gencode.v43.annotation.gtf.gz
+  premethyst_bed2h5.py /container_src/premethyst_bed2h5.py
 
 %labels
     Author Ryan Mulqueen
-    Version v0.1
+    Version v0.2
     MyLabel Amethyst Container
 ```
 

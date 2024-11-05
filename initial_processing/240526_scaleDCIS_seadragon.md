@@ -269,7 +269,13 @@ rm -rf bsub.log
 bsub < scalemet.lsf
 
 mkdir -p transfer_dat
+mkdir -p transfer_dat_bam
 find ./cg_sort_cov -type l -exec bash -c 'cp -R "$(readlink -m "$0")" ./transfer_dat' {} \; #scale pipeline makes empty files, this throws errors for empty files (but can be ignored)
+find ./bamDeDup -type l -exec bash -c 'cp -R "$(readlink -m "$0")" ./transfer_dat_bam' {} \; #scale pipeline makes empty files, this throws errors for empty files (but can be ignored)
+
+bsub -Is -W 6:00 -q transfer -n 1 -M 16 -R rusage[mem=16] /bin/bash #get interactive transfer node this has internet access for environment set up
+sftp mulqueen@qcprpgeo.mdanderson.edu
+
 cp -R ./report ./transfer_dat
 cd /rsrch5/home/genetics/NAVIN_LAB/Ryan/projects/metact/240526_RMMM_scalebio_dcis/cg_sort_cov
 ```
@@ -318,5 +324,68 @@ python ~/src/premethyst_calls2h5.py $cg_sort/$indir ${cg_sort}/h5_files/${outnam
 export -f premethyst
 parallel -j ${task_cpus} -a cg_cov_folders.txt premethyst
 
+
+```
+
+#split bam (on geo also)
+
+```bash
+cd /volumes/USR2/Ryan/projects/metact/240526_RMMM_scalebio_dcis/transfer_dat_bam
+
+#get read counts of cellIDs, merge all tagmentation well read counts together, and then run scbam splitting
+readcount_bam() {
+	bam_name=$1
+	export cellline=$(echo $bam_name | cut -d '.' -f 1 )
+	export well=$(echo $bam_name | cut -d '.' -f 2 )
+	samtools view $bam_name \
+	| awk -v b=${bam_name} '{split($1,a,":"); print a[1],b}' \
+	| sort \
+	| uniq -c \
+	| sort -k1,1n \
+	| awk '$1>100000 {print $0}' > ${cellline}.${well}.tgmt_readcount.tsv
+}
+export -f readcount_bam
+parallel -j 50 readcount_bam ::: $(ls *bam)
+
+cat *tgmt_readcount.tsv > readcount.tsv
+
+split_bam() {
+test=$1
+idx=$(echo $test | cut -d ' ' -f 2 )
+outidx=$(echo $idx | sed -e 's/+/_/g' -)
+bam=$(echo $test | cut -d ' ' -f 3)
+cellline=$(echo $bam | cut -d '.' -f 1 )
+well=$(echo $bam | cut -d '.' -f 2 )
+
+((samtools view -H $bam) && (samtools view $bam | awk -v i=$idx '{split($1,a,":"); if(a[1]==i) print $0}')) \
+| samtools view -bS - \
+| samtools sort -T . -O BAM -o ${cellline}.${well}.${outidx}.sorted.bam - 
+}
+
+export -f split_bam
+parallel -j 100 -a readcount.tsv split_bam 
+
+mkdir -p /volumes/USR2/Ryan/projects/metact/240526_RMMM_scalebio_dcis/sc_bams
+mv *sorted.bam /volumes/USR2/Ryan/projects/metact/240526_RMMM_scalebio_dcis/sc_bams
+
+#index bams for igv
+index_bam() {
+outname=$1
+samtools index -b -@ 1 $1 ${1}.bai
+}
+
+export -f index_bam
+parallel -j 100 index_bam ::: $(ls *bam)
+"""
+
+# Run CNV calling
+```bash
+singularity shell \
+--bind ~/projects \
+~/singularity/copykit.sif
+
+```
+
+```R
 
 ```
