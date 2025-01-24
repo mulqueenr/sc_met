@@ -81,12 +81,7 @@ sudo chmod 666 /var/run/docker.sock
 ```bash
 sudo singularity build --sandbox amethyst2/ docker://ubuntu:latest
 sudo singularity shell --writable amethyst2/
-# %environment
-# set up all essential environment variables
-export LC_ALL=C
-export PATH=/opt/miniconda3/bin:$PATH
-export PYTHONPATH=/opt/miniconda3/lib/python3.9/:$PYTHONPATH
-export PYTHONPATH=/opt/miniconda3/lib/python3.12/:$PYTHONPATH
+
 
 # %post
 # update and install essential dependencies
@@ -95,6 +90,7 @@ apt-get update && apt-get install -y automake \
 build-essential \
 bzip2 \
 wget \
+htop \
 git \
 default-jre \
 unzip \
@@ -115,14 +111,19 @@ conda config --add channels bioconda
 conda config --add channels conda-forge
 conda install -y -c conda-forge mamba # general dependencies
 
+eval "$(mamba shell hook --shell bash)"
+mamba activate
+mamba shell init
+source ~/.bashrc
+
 #mamba installs pip
-mamba install -y -f pip
+mamba install pip
 
 #pip installs for premethyst
 pip install h5py numpy argparse pybedtools pandas scipy
-mamba install -y -f -c bioconda bwa samtools bedtools
-mamba install -y -f -c conda-forge parallel
-mamba install -y -f -c conda-forge r r-devtools
+mamba install -y -c bioconda bwa samtools bedtools
+mamba install -y -c conda-forge parallel
+mamba install -y -c conda-forge r r-devtools
 
 #install R packages
 R --slave -e 'install.packages("Seurat",repos="http://cran.us.r-project.org")'
@@ -132,7 +133,6 @@ R --slave -e 'BiocManager::install(c("caret", "data.table", "dplyr", "furrr", "f
 "plotly", "plyr", "purrr", "randomForest", "rhdf5", "rtracklayer", "scales", "stats", "stringr", 
 "tibble", "tidyr", "umap", "utils"))'
 R --slave -e 'install.packages("Signac",repos="http://cran.us.r-project.org")'
-
 R --slave -e 'devtools::install_github("JinmiaoChenLab/Rphenograph")'
 R --slave -e 'devtools::install_github("KrishnaswamyLab/MAGIC/Rmagic")'
 R --slave -e 'devtools::install_github("lrylaarsdam/amethyst")'
@@ -145,12 +145,30 @@ R --slave -e 'BiocManager::install(c("DirichletMultinomial"))'
 R --slave -e 'BiocManager::install(c("GO.db","motifmatchr","JASPAR2020","rGREAT"))'
 R --slave -e 'devtools::install_github("GreenleafLab/chromVARmotifs")'
 R --slave -e 'BiocManager::install("chromVAR")'
+R --slave -e 'install.packages(c("GeneNMF","magrittr","ape","tidyverse"),repos="http://cran.us.r-project.org")'
+R --slave -e 'BiocManager::install(c("ggtree","universalmotif"))'
+R --slave -e 'BiocManager::install(c("BSgenome.Hsapiens.UCSC.hg38"))'
 
 #predownload the hg38 ref data
+wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_43/gencode.v43.annotation.gtf.gz
 wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_43/gencode.v43.annotation.gtf.gz
 
 #Add premethyst dependencies
 pip install h5py numpy pandas argparse
+
+
+#Add methyltree environment
+mamba create -n MethylTree python=3.9 --yes
+
+mamba activate MethylTree
+pip install poetry
+git clone https://github.com/ShouWenWang-Lab/MethylTree # get the MethylTree package
+cd MethylTree # Go to the MethylTree directory
+poetry install
+cd ..
+pip install methscan
+pip install jupyterlab
+python -m ipykernel install --user --name=MethylTree
 ```
 
 ```bash
@@ -166,20 +184,15 @@ From: /home/ubuntu/amethyst.sif
 
 %environment
 # set up all essential environment variables
-export LC_ALL=C
 export PATH=/opt/miniconda3/bin:$PATH
-export PYTHONPATH=/opt/miniconda3/lib/python3.9/:$PYTHONPATH
-export PYTHONPATH=/opt/miniconda3/lib/python3.12/:$PYTHONPATH
-source /opt/etc/bashrc
 
 %files
   gencode.v43.annotation.gtf.gz /container_ref/gencode.v43.annotation.gtf.gz
-  premethyst_bed2h5.py /container_src/premethyst_bed2h5.py
 
 %labels
     Author Ryan Mulqueen
-    Version v0.2
-    MyLabel Amethyst Container
+    Version v0.3
+    MyLabel Amethyst Container with MethylTree
 ```
 
 ```bash

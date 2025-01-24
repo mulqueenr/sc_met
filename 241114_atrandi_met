@@ -1,0 +1,111 @@
+#set up environment variables 
+export SCRATCH="/volumes/USR2/Ryan/work"
+export projDir="/volumes/USR2/Ryan/projects/10x_MET"
+export srcDir="${projDir}/src"
+export refDir="/volumes/USR2/Ryan/ref/refdata-cellranger-arc-GRCh38-2020-A-2.0.0"
+export outDir="${projDir}/241112_atrandi_met"
+export DNArunDir="/volumes/seq/flowcells/MDA/nextseq2000/2024/241103_RM_10xmet_atrandi_met/241103_VH01788_59_AAG2N3JM5"
+export outname="10xmet_231"
+export task_cpus=250
+export index="/volumes/USR2/Ryan/projects/metact/ref/bsbolt/genome_index.pkl"
+
+mkdir -p $outDir
+cd $outDir
+
+#sample numbers correspond to wells in lab notebook
+# 8well strip tube	Reaction	i5 Tn5	i7 Tn5	s3 Swap Oligo	Gapfill	Gapfill/Swap Polymerase	Amplrification Results 
+# (POST-EM Q5U)
+# 1	1	Nexti5	Nexti7	Just mCTP Gapfill	72C 30 min	Q5	X N727  S504
+# 1	2	Nexti5	SBS12_18_ME_sci_1	Just mCTP Gapfill	72C 30 min	Q5	
+# 1	3	Nexti5	SBS12_UME_sci_1	Just mCTP Gapfill	72C 30 min	Q5	
+# 1	4	Nexti5	Nexti7_Met_U	Just mCTP Gapfill	72C 30 min	Q5	X N727 S505
+# 1	5	Nexti5	Nexti7	Just mCTP Gapfill	72C 30 min	VeraSeq 2.0	X N727 S506
+# 1	6	Nexti5	SBS12_18_ME_sci_1	Just mCTP Gapfill	72C 30 min	VeraSeq 2.0	
+# 1	7	Nexti5	SBS12_UME_sci_1	Just mCTP Gapfill	72C 30 min	VeraSeq 2.0	
+# 1	8	Nexti5	Nexti7_Met_U	Just mCTP Gapfill	72C 30 min	VeraSeq 2.0	X N727 S507
+							
+# 2	9	NA	SBS12_UME_sci_1	A14_ME_LNAME	12 cycles PCR	Q5	
+# 2	10	NA	Nexti7_Met_U	A14_ME_LNAME	12 cycles PCR	Q5	X N727 S508
+# 2	11	NA	SBS12_UME_sci_1	A14_ME_LNAME	12 cycles PCR	VeraSeq 2.0	
+# 2	12	NA	Nexti7_Met_U	A14_ME_LNAME	12 cycles PCR	VeraSeq 2.0	X N727 S509
+# 2	13	NA	SBS12_UME_sci_1	Truseqi5_idx_LNAME	12 cycles PCR	Q5	
+# 2	14	NA	Nexti7_Met_U	Truseqi5_idx_LNAME	12 cycles PCR	Q5	
+# 2	15	NA	SBS12_UME_sci_1	Truseqi5_idx_LNAME	12 cycles PCR	VeraSeq 2.0	
+# 2	16	NA	Nexti7_Met_U	Truseqi5_idx_LNAME	12 cycles PCR	VeraSeq 2.0	
+
+echo """
+[Header]
+FileFormatVersion,2
+
+[BCLConvert_Settings]
+CreateFastqForIndexReads,0
+OverrideCycles,Y151;I8;N8I8;Y151
+
+[BCLConvert_Data]
+Sample_ID,index,index2
+1,CGATCAGT,AGAGTAGA
+4,CGATCAGT,GTAAGGAG
+5,CGATCAGT,ACTGCATA
+8,CGATCAGT,AAGGAGTA
+10,CGATCAGT,CTAAGCCT
+12,CGATCAGT,GCGTAAGA
+""" > sample_sheet.csv
+
+bcl-convert --bcl-input-directory $DNArunDir --output-directory $outDir --sample-sheet sample_sheet.csv --force
+
+# Run adapter trimming and alignment
+singularity shell \
+--bind ~/projects \
+--bind /volumes/USR2/Ryan/projects/metact/ref/:/ref \
+~/singularity/scalemethyl_v1.6.sif
+
+# run fastqc to assess conversion rate
+for i in *fastq.gz; do fastqc -t 30 $i; done 
+
+adapter_trim() { 
+sample_name=${1}
+
+/opt/conda/envs/scaleMethylTools/bin/cutadapt \
+-j 10 \
+-a CTGTCTCTTA -A CTGTCTCTTA \
+-U 10 -u 10 \
+-o ${sample_name}.R1.trim.fastq.gz \
+-p ${sample_name}.R2.trim.fastq.gz \
+${sample_name}_L001_R1_001.fastq.gz \
+${sample_name}_L001_R2_001.fastq.gz
+}
+
+export -f adapter_trim
+adapter_trim 1_S1
+adapter_trim 4_S2
+adapter_trim 5_S3
+adapter_trim 8_S4
+adapter_trim 10_S5
+adapter_trim 12_S6
+
+align() {
+sample_name=${1}
+bsbolt Align \
+-F1 ${sample_name}.R1.trim.fastq.gz \
+-F2 ${sample_name}.R2.trim.fastq.gz \
+-t 50 -OT 50 \
+-O ${sample_name} \
+-DB $index >> ${sample_name}.bsbolt.log 2>> ${sample_name}.bsbolt.log
+}
+
+export index="/volumes/USR2/Ryan/projects/metact/ref/bsbolt"
+
+#export index="/ref/bsbolt"
+export -f align
+align 1_S1
+align 4_S2
+align 5_S3
+align 8_S4
+align 10_S5
+align 12_S6
+
+
+for i in $(ls *.bam); do
+    samtools sort -n $i | samtools fixmate -p -m - - | samtools sort | samtools markdup -r -S  --write-index - ${i}::-4}.bbrd.bam
+    bsbolt CallMethylation -t 50 -I ${i::-4}.bbrd.bam -O ${i::-4}.cg.bam -DB $index -min 0 > ${i::-4}.metreport.txt
+done &
