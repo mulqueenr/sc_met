@@ -32,6 +32,8 @@ library(motifmatchr)
 library(JASPAR2020)
 library(TFBSTools)
 library(parallel)
+library(chromVAR)
+library(SummarizedExperiment)
 
 #source("~/projects/metact/src/amethyst_custom_functions.R") to load in
 
@@ -185,17 +187,19 @@ dmr_and_1kb_window_gen<-function(
     collapsed_dmrs$celltype<-celltype_test[collapsed_dmrs$test]
     saveRDS(collapsed_dmrs,file=paste0(prefix,".dmr.",groupBy,".collapsed.rds"))
 
-    plt<-ggplot(collapsed_dmrs |> dplyr::group_by(celltype, direction) |> dplyr::summarise(n = n()), 
+    plt<-ggplot(collapsed_dmrs |> dplyr::group_by(celltype, direction) |> dplyr::summarise(n = dplyr::n()), 
        aes(y = celltype, x = n, fill = celltype)) + geom_col() + 
-    facet_grid(vars(direction), scales = "free_y") + scale_fill_manual(values = makePalette(option = 7, n = 13) ) + theme_classic()
+        facet_grid(vars(direction), scales = "free_y") + 
+        scale_fill_manual(values = makePalette(option = 7, n = length(unique(collapsed_dmrs$celltype)) ) ) + 
+        theme_classic()
     
     ggsave(plt,file=paste0(prefix,".met_per_dmr.",groupBy,".pdf"))
     median(collapsed_dmrs$dmr_end-collapsed_dmrs$dmr_start)
 
     top_dmrs <- collapsed_dmrs |> 
     dplyr::group_by(celltype, direction) |> 
-    dplyr::arrange(dmr_padj, .by_group = TRUE) |> dplyr::mutate(rank_padj = 1:n()) |>
-    dplyr::arrange(desc(abs(dmr_logFC)), .by_group = TRUE) |> dplyr::mutate(rank_logFC = 1:n()) |>
+    dplyr::arrange(dmr_padj, .by_group = TRUE) |> dplyr::mutate(rank_padj = 1:dplyr::n()) |>
+    dplyr::arrange(desc(abs(dmr_logFC)), .by_group = TRUE) |> dplyr::mutate(rank_logFC = 1:dplyr::n()) |>
     rowwise() |> dplyr::mutate(total_rank = sum(rank_padj, rank_logFC)) |> 
     group_by(celltype, direction) |> slice_min(n = 20, order_by = total_rank) |>
     dplyr::mutate(location = paste0(chr, "_", (dmr_start - 2000), "_", (dmr_end + 2000))) |> dplyr::arrange(direction)
@@ -354,6 +358,139 @@ methyltree_output<-function(obj=obj,prefix="DCIS-41T",sample="DCIS-41T",filt_min
       h5write(methyltreeoutput,file=paste0(prefix,"_methyltree_input.h5"),name="data")
       h5write(out_metadata,file=paste0(prefix,"_methyltree_input.h5"),name="metadata")
     }
+
+
+
+##############CHROMVAR BLOCK################
+
+#chromvar preparation for all cells
+chromvar_met_per_cell<-function(obj,stepsize=500,threads=50,percent_cell_coverage=2.5){
+  #run window scoring for all cells
+  chromvar_windows <- makeWindows(obj,
+                                  stepsize = stepsize, 
+                                  type = "CG", 
+                                  metric = "score", 
+                                  threads = threads, 
+                                  index = "chr_cg", 
+                                  nmin = 2) 
+  #binarized based on hypomethylation score (1 for hypo, 0 for hyper)
+  counts<-ifelse(chromvar_windows<0.25,1,0) #score ranges from -1 to 1, using 0.25 for cutoff
+  #require 2.5% cell coverage for windows, this is kinda on par with ATAC data, kinda an arbitrary cutoff. but mostly to decrease computational time on which windows we scan for motifs (5% is 10k window, 2% is 909k windows)
+  counts<-counts[rowSums(!is.na(counts))>=(ncol(counts)/100)*percent_cell_coverage,] 
+  counts[is.na(counts)]<-0
+  #remove purely hypermethylated windows
+  counts<-counts[rowSums(counts)>1,] 
+  #dim(counts)
+  return(counts)}
+  
+chromvar_met_per_cluster<-function(obj,stepsize=500,threads=50,mincov=30,percent_cell_coverage=50,groupBy="cluster_id"){
+  #run window scoring for all cells
+  clusterwindows <- calcSmoothedWindows(obj, 
+              type = "CG", 
+              threads = threads,
+              step = 500,
+              smooth = 1,
+              index = "chr_cg",
+              groupBy = groupBy, 
+              returnSumMatrix = TRUE, 
+              returnPctMatrix = TRUE)
+  cov_mat<-clusterwindows[["sum_matrix"]]
+  cov_mat_col<-colnames(cov_mat)[which(grepl(colnames(cov_mat),pattern="_t$"))]
+  cov_mat<-as.data.frame(cov_mat)[,colnames(cov_mat) %in% cov_mat_col]
+  pct_mat<-as.data.frame(clusterwindows[["pct_matrix"]][,4:ncol(clusterwindows[["pct_matrix"]])])
+  row.names(pct_mat)<-paste(clusterwindows[["pct_matrix"]]$chr,clusterwindows[["pct_matrix"]]$start,clusterwindows[["pct_matrix"]]$end,sep="_")
+  pct_mat[which(cov_mat<min_cov,arr.in=T)]<-NA
+  #binarized based on hypomethylation score (1 for hypo, 0 for hyper)
+  counts<-ifelse(pct_mat<0.25,1,0) #score ranges from -1 to 1, using 0.25 for cutoff
+  #require 50% cell coverage for windows
+  idx<-which(rowSums(!is.na(counts))>=(ncol(counts)/100)*percent_cell_coverage)
+  counts<-counts[idx,] 
+  counts[is.na(counts)]<-0
+  #remove purely hypermethylated windows
+  counts<-counts[rowSums(counts)>1,] 
+  #dim(counts)
+  return(counts)}
+
+  chromvar_methylation<-function(obj,counts,prefix="allcells",threads){
+    if(dim(counts)[2]>200){
+      print("Treating counts matrix as single cell input.")
+    }else {
+      print("Treating counts matrix as summarized cluster input.")
+    }
+    #prepare summarized experiment for chromvar
+    peaks<-GenomicRanges::makeGRangesFromDataFrame(data.frame(
+      seqnames=unlist(lapply(strsplit(row.names(counts),"_"),"[",1)),
+      start=unlist(lapply(strsplit(row.names(counts),"_"),"[",2)),
+      end=unlist(lapply(strsplit(row.names(counts),"_"),"[",3))))
+
+    #prepare motifs
+    opts <- list()
+    opts[["species"]] <- "Homo sapiens"
+    opts[["collection"]] <- "CORE"
+    opts[["all_versions"]] <- FALSE
+    motifs <- TFBSTools::getMatrixSet(JASPAR2020,opts)
+
+  #split peaks evenly into chunks so we can multicore the motif scanning
+  motif_matches<-mclapply(split(peaks,  cut(seq_along(peaks), threads, labels = FALSE)),
+                          function(x){
+                          matchMotifs(motifs, x, genome = BSgenome.Hsapiens.UCSC.hg38, p.cutoff=0.01)},
+                          mc.cores=threads)
+  motif_ix<-do.call("rbind",motif_matches)
+
+  #create summarized experiment
+  if(dim(counts)[2]<200){ colnames(counts)<-paste("cluster",colnames(counts),sep="_")}
+
+  rse <- SummarizedExperiment::SummarizedExperiment(
+                                  assays=list(counts=as(counts, "sparseMatrix")),
+                                  rowRanges=peaks)
+  colData(rse)<-as(obj@metadata[colnames(counts),],"DataFrame")
+  rse <- addGCBias(rse, genome = BSgenome.Hsapiens.UCSC.hg38)
+  dev <- computeDeviations(object = rse, annotations = motif_ix)
+  saveRDS(dev,file=paste0(prefix,".chromvar.rds"))
+
+  #calculate variability
+  variability <- computeVariability(dev)
+  ggsave(plotVariability(variability, use_plotly = FALSE),file=paste0(prefix,".chromvar_variability.pdf"))
+
+  #Differential motif analysis (for single cell)
+  if(dim(dev)[2]>200){
+  diff_acc <- differentialDeviations(dev, "cluster_id")
+  diff_var <- differentialVariability(dev, "cluster_id")
+  }
+
+  #differential tfbs by highest variability
+  var_cut<-ifelse(dim(dev)[2]>200,0.3,1.5)
+
+  diff_tfbs<-row.names(variability[variability$variability>var_cut,])
+  devs<-deviations(dev)
+  devs[is.na(devs)]<-0 #fill in NA for dev scores
+  #dim_out<-irlba::irlba(devs[diff_tfbs,], 30)
+  dim_out<-t(devs[diff_tfbs,])
+  dim<-uwot::umap(dim_out)
+  dim<-as.data.frame(dim)
+  colnames(dim)<-c("chromvar_umap_x","chromvar_umap_y")
+  row.names(dim)<-colnames(devs)
+  if(dim(dev)[2]>200){
+  dim$cluster_id<-obj@metadata[row.names(dim),]$cluster_id
+  rowannot<-as.data.frame(colData(dev)[c("cluster_id","sample")])
+  } else {
+    dim$cluster_id<-colnames(counts)
+    rowannot<-as.data.frame(colnames(counts))
+    row.names(rowannot)<-row.names(dim)
+  }
+
+  plt<-ggplot(dim,aes(x=chromvar_umap_x,y=chromvar_umap_y,color=cluster_id))+geom_point()+theme_minimal()
+  ggsave(plt,file=paste0(prefix,".chromvar_umap.pdf"))
+
+  sample_cor <- getSampleCorrelation(dev,threshold=var_cut)
+  sample_cor[is.na(sample_cor)]<-0 #fill in na as 0 for sites with no overlap
+  plt<-pheatmap(as.dist(sample_cor), 
+          annotation_row = rowannot,
+          clustering_distance_rows = as.dist(1-sample_cor), 
+          clustering_distance_cols = as.dist(1-sample_cor))
+  ggsave(plt,file=paste0(prefix,".chromvar_motifs.heatmap.pdf"))
+  saveRDS(dev,file=paste0(prefix,".chromvar.rds"))
+}
 
 #test read
 #import pandas as pd

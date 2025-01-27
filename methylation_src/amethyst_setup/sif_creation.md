@@ -120,7 +120,7 @@ source ~/.bashrc
 mamba install pip
 
 #pip installs for premethyst
-pip install h5py numpy argparse pybedtools pandas scipy
+pip install h5py numpy argparse pybedtools pandas scipy tables
 mamba install -y -c bioconda bwa samtools bedtools
 mamba install -y -c conda-forge parallel
 mamba install -y -c conda-forge r r-devtools
@@ -140,7 +140,7 @@ R --slave -e 'install.packages("pheatmap",repos="http://cran.us.r-project.org")'
 R --slave -e 'install.packages("plyr",repos="http://cran.us.r-project.org")'
 
 #install chromvar for motif enrichment in DMRs
-conda install conda-forge::gsl
+conda install -y conda-forge::gsl
 R --slave -e 'BiocManager::install(c("DirichletMultinomial"))'
 R --slave -e 'BiocManager::install(c("GO.db","motifmatchr","JASPAR2020","rGREAT"))'
 R --slave -e 'devtools::install_github("GreenleafLab/chromVARmotifs")'
@@ -148,31 +148,29 @@ R --slave -e 'BiocManager::install("chromVAR")'
 R --slave -e 'install.packages(c("GeneNMF","magrittr","ape","tidyverse"),repos="http://cran.us.r-project.org")'
 R --slave -e 'BiocManager::install(c("ggtree","universalmotif"))'
 R --slave -e 'BiocManager::install(c("BSgenome.Hsapiens.UCSC.hg38"))'
+R --slave -e 'install.packages(c("patchwork"),repos="http://cran.us.r-project.org")'
 
 #predownload the hg38 ref data
 wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_43/gencode.v43.annotation.gtf.gz
-wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_43/gencode.v43.annotation.gtf.gz
-
-#Add premethyst dependencies
-pip install h5py numpy pandas argparse
-
 
 #Add methyltree environment
 mamba create -n MethylTree python=3.9 --yes
-
 mamba activate MethylTree
 pip install poetry
 git clone https://github.com/ShouWenWang-Lab/MethylTree # get the MethylTree package
 cd MethylTree # Go to the MethylTree directory
+poetry lock
 poetry install
 cd ..
 pip install methscan
 pip install jupyterlab
+pip install h5py numpy argparse pybedtools pandas scipy tables
 python -m ipykernel install --user --name=MethylTree
+
 ```
 
 ```bash
-sudo singularity build amethyst.sif amethyst2/ 
+sudo singularity build amethyst2.sif amethyst2/ 
 ```
 
 # then build with proper env variables preloaded
@@ -180,14 +178,17 @@ sudo singularity build amethyst.sif amethyst2/
 amethyst.def
 ```bash
 Bootstrap: localimage
-From: /home/ubuntu/amethyst.sif
+From: /home/ubuntu/amethyst2.sif
 
 %environment
 # set up all essential environment variables
-export PATH=/opt/miniconda3/bin:$PATH
+	export PATH=/opt/miniconda3/bin:$PATH
+	conda init 2>/dev/null
+	source ~/.bashrc
 
 %files
   gencode.v43.annotation.gtf.gz /container_ref/gencode.v43.annotation.gtf.gz
+  MethylTree /container_src/MethylTree
 
 %labels
     Author Ryan Mulqueen
@@ -212,6 +213,7 @@ From: ubuntu:latest
 	export PATH=/opt/miniconda3/bin:$PATH
 	export PYTHONPATH=/opt/miniconda3/lib/python3.9/:$PYTHONPATH
 	export LC_ALL=C.UTF-8
+
 %post
 	# update and install essential dependencies
 	apt-get -y update
