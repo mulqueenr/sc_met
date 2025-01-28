@@ -34,6 +34,8 @@ library(TFBSTools)
 library(parallel)
 library(chromVAR)
 library(SummarizedExperiment)
+library(ggseqlogo)
+library(patchwork)
 
 #source("~/projects/metact/src/amethyst_custom_functions.R") to load in
 
@@ -382,7 +384,7 @@ chromvar_met_per_cell<-function(obj,stepsize=500,threads=50,percent_cell_coverag
   counts<-counts[rowSums(counts)>1,] 
   #dim(counts)
   return(counts)}
-  
+
 chromvar_met_per_cluster<-function(obj,stepsize=500,threads=50,mincov=30,percent_cell_coverage=50,groupBy="cluster_id"){
   #run window scoring for all cells
   clusterwindows <- calcSmoothedWindows(obj, 
@@ -459,14 +461,14 @@ chromvar_met_per_cluster<-function(obj,stepsize=500,threads=50,mincov=30,percent
   }
 
   #differential tfbs by highest variability
-  var_cut<-ifelse(dim(dev)[2]>200,0.3,1.5)
+  var_cut<-ifelse(dim(dev)[2]>200,1.5,0.3)
 
   diff_tfbs<-row.names(variability[variability$variability>var_cut,])
-  devs<-deviations(dev)
+  devs<-deviationScores(dev)
   devs[is.na(devs)]<-0 #fill in NA for dev scores
   #dim_out<-irlba::irlba(devs[diff_tfbs,], 30)
   dim_out<-t(devs[diff_tfbs,])
-  dim<-uwot::umap(dim_out)
+  dim<-uwot::umap(dim_out,n_neighbors=2)
   dim<-as.data.frame(dim)
   colnames(dim)<-c("chromvar_umap_x","chromvar_umap_y")
   row.names(dim)<-colnames(devs)
@@ -488,127 +490,163 @@ chromvar_met_per_cluster<-function(obj,stepsize=500,threads=50,mincov=30,percent
           annotation_row = rowannot,
           clustering_distance_rows = as.dist(1-sample_cor), 
           clustering_distance_cols = as.dist(1-sample_cor))
-  ggsave(plt,file=paste0(prefix,".chromvar_motifs.heatmap.pdf"))
+  ggsave(plt,file=paste0(prefix,".chromvar_motifs.correlation.heatmap.pdf"))
+
+    devs<-deviationScores(dev)
+    colnames(devs)<-colnames(counts)
+    row.names(devs)<-rowData(dev)$name
+    diff_tfbs_names<-rowData(dev)[diff_tfbs,]$name
+    devs<-devs[diff_tfbs_names,]
+    devs<-scale(devs)
+    devs_row_order<-hclust(dist(devs))
+    plt<-pheatmap(devs,cluster_rows=devs_row_order,fontsize=4,angle_col="90",treeheight_col=0,color = colorRampPalette(c("black", "white", "magenta"))(100))
+    ggsave(plt,file=paste0(prefix,".chromvar_motifs.heatmap.pdf"))
+
+###Add motifs to bottom of chromvar plots, so we can see some CG enrichment!
+library(ggplotify)
+
+    motifs_to_plot <-motifs[diff_tfbs] 
+    motifs_to_plot<-motifs_to_plot[devs_row_order$order]
+
+    plt_motifs<-ggseqlogo::ggseqlogo(data=Matrix(motifs_to_plot),seq_type="dna",method="bits",ncol=1)
+    #plt_out<-patchwork::wrap_plots(as.ggplot(plt),plt_motif)+patchwork::plot_layout(ncol = 2, heights = c(10, 10), widths = c(10,2))
+    #ggsave(plt_out,file="test_motif.pdf",width=10,height=10)
+   #plt_out<-plot_grid(as.ggplot(plt), plt_motif, ncol = 2, align = "h",axis="rt",rel_widths = c(1, 0.1))
+    ggsave(plt_motifs,file="test_motif.pdf",width=5,height=100,limitsize=F)
+
+
+
+    plt<-MotifPlot(object = x,assay="peaks",motifs = motif_list[get_order(o_rows,1)],ncol=1)+theme_void()+theme(strip.text = element_blank())
+    ggsave(plt,file=paste0(prefix,".tf.heatmap.motif.pdf"),height=100,width=2,limitsize=F)
   saveRDS(dev,file=paste0(prefix,".chromvar.rds"))
 }
-
-#test read
-#import pandas as pd
-#import tables
-#dat=pd.read_hdf("DCIS-41T_methyltree_output.data.h5",key="data")
-#metadat=pd.read_hdf("DCIS-41T_methyltree_output.data.h5",key="metadata")
 
 
 ###############################################################################################################
 ########################################HYPOMETHYLATION PLOT###################################################
 ###############################################################################################################
 
-# colors=c(
-# "lumHR1"="#e33c96",
-# "lumHR2"="#ad2286",
-# "lumHR3"="#c03a95",
-# "lumHR4"="#ed3d94",
-# "lumHR5"="#bc70ae",
-# "lumHR6"="#7b2881",
-# "lumHR7"="#ae62a7",
-# "basal1"="#7f479c",
-# "lumsec"="#5cbb5b",
 
-# "perivasc"="#fed700",
-# "fibro1"="#ed1d7e",
-# "fibro2"="#b51f61",
-# "endo"="#a1d39d",
-# "stroma4"="#35b551",
-
-# "tnkcell"="#489bd5",
-# "myeloid2"="#70c6aa",
-# "myeloid1"="#35b551",
-# "mast"="#c4aed4",
-# "bcell"="#3953a4")
+col_celltype=c(
+"Tcell_1"="#00ffff",
+"Tcell_2"="#3399cc",
+"Tcell_3"="#0099ff",
+"Myeloid"="#66cc99",
+"Endo"="#ffcc00",
+"Fibro"="#cc3366",
+"LumHRCancer_1"="#ff3399",
+"LumHRCancer_2"="#993399",
+"LumHRCancer_3"="#cc3399",
+"LumHRCancer_4"="#ff6666",
+"LumHRNormal"="#cc3399",
+"LumSec_1"="#99cc99",
+"LumSec_2"="#66cc66",
+"Basal_1"="#993399",
+"Basal_2"="#9966ff")
 
 
-# cgisland<-"/volumes/USR2/Ryan/projects/metact/ref/cpgIslandExt.bed"
 
 # #set colors for each facet and use greyscaling for higher met levels
 # #https://stackoverflow.com/questions/33221794/separate-palettes-for-facets-in-ggplot-facet-grid
 # #histograM <- function(obj,
 
-#               genes=c("COL1A1")       
-#                       matrix = "cg_celltype_tracks";
-#                       #colors = NULL;
-#                       trackOverhang = 5000;
-#                       arrowOverhang = 3000;
-#                       ncol = length(genes);
-#                       invert_met = TRUE;
-#                       legend = TRUE;
-#                       removeNA = TRUE;
-#                       width = 1000;
-#                       trackScale = 1.5;
-#                       colorMax = 100;#) {
+hypoM<-function(obj=obj,genes=c("KIT"),prefix="hbca_dcis",matrix = "cg_celltype_tracks",colors=col_celltype,
+                trackOverhang = 3000,arrowOverhang = 0,ncol = length(genes),
+                invert_met = TRUE,legend = TRUE,removeNA = TRUE,
+                width = 500,trackScale = 1.5,colorMax = 100,
+                cgisland="/volumes/USR2/Ryan/projects/metact/ref/cpgIslandExt.bed"){
+    #prepare cgi
+    cgi<-rtracklayer::import(cgisland)
+    cgi<-as.data.frame(cgi)
+    colnames(cgi)<-c("chr","start","end","strand")
+    #use named list for colors
+    if (!is.null(colors)) {
+    pal <- colors
+    } else {
+    pal <- rev(c("#FF0082", "#dbdbdb", "#cccccc", "#999999"))
+    }
+    #req ref
+    if (is.null(obj@ref)) {
+    stop("Please make sure a genome annotation file has been added to the obj@ref slot with makeRef().")
+    }
+    p <- vector("list", length(genes)) # empty plot list
+    for (i in 1:length(genes)) { #make a plot per gene
+        print(paste("Plotting gene:",genes[i]))
+        ref <- obj@ref |> dplyr::filter(gene_name == genes[i])
+        aggregated <- obj@genomeMatrices[[matrix]]
 
-#   if (!is.null(colors)) {
-#     pal <- colors
-#   } else {
-#     pal <- rev(c("#FF0082", "#dbdbdb", "#cccccc", "#999999"))
-#   }
+        toplot <- aggregated[c((aggregated$chr == ref$seqid[ref$type == "gene"] &
+                                    aggregated$start > (ref$start[ref$type == "gene"] - trackOverhang) &
+                                    aggregated$end < (ref$end[ref$type == "gene"] + trackOverhang))), ]
+        cgi <- cgi[cgi$chr == as.character(toplot$chr[1]) &
+                            cgi$start > min(toplot$start) &
+                            cgi$end < max(toplot$end),]
+                                
+        ngroups <- ncol(toplot) - 3 #subtract chr start end
+        trackHeight <- ngroups * trackScale
+        toplot <- tidyr::pivot_longer(toplot, cols = c(4:ncol(toplot)), names_to = "group", values_to = "pct_m") |> 
+        dplyr::rowwise() |> 
+        dplyr::mutate(middle = mean(c(start, end), na.rm = TRUE))
+        toplot <- toplot |> dplyr::filter(!is.na(pct_m))
 
-#   if (is.null(obj@ref)) {
-#     stop("Please make sure a genome annotation file has been added to the obj@ref slot with makeRef().")
-#   }
+        if (invert_met){
+            toplot$pct_m<-toplot$pct_m-100
+            colorMax=-100
+        }
+        #initialize first row
+        p[[i]] <- vector("list", length(colors)+1) # empty plot list
+        #plot group tracks
+        xmin_pos<-NA
+        xmax_pos<-NA
+        for (j in names(colors)){
+            toplot_sub<-toplot[toplot$group==j,]
+            j_panel=which(j==names(colors))+1
+            p[[i]][[j_panel]] <- ggplot2::ggplot() + 
+                ggplot2::geom_col(data = toplot_sub, 
+                ggplot2::aes(x = middle, y = pct_m, fill = pct_m), width = width) + 
+                scale_fill_gradient2(high="black",mid="grey",low=colors[j],midpoint=-60) + 
+                ylab(j) +
+                theme(axis.text.x = element_blank(),
+                axis.ticks.x = element_blank(),
+                axis.title.x = element_blank(),
+                axis.text.y=element_text(size=3),
+                axis.title.y=element_text(angle=90, vjust=1,size=4,color=colors[j]),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.border = element_blank(),
+                panel.background = element_blank())+
+                scale_y_continuous(limits = c(-100,0),labels=rev(c("100", "75","50","25","0")))+
+                theme(legend.position="none")
+            xmin_pos=min(toplot_sub$middle)-width/2
+            xmax_pos=max(toplot_sub$middle)-width/2
+            }
+        #first track is annot
+        p[[i]][[1]] <-ggplot()+
+        ggplot2::geom_rect(fill = "pink",alpha=0.8, data = ref |> dplyr::filter(type == "gene") |>
+                            dplyr::mutate(promoter_start = ifelse(strand == "+", (start - 1500), (end + 1500)),
+                            promoter_end = ifelse(strand == "+", (promoter_start+3000), (promoter_start-3000))),
+                            ggplot2::aes(xmin = promoter_start, xmax = promoter_end, ymin = 0, ymax = trackHeight/4)) +
+        ggplot2::geom_rect(alpha=0.8,fill = "black", data = ref |> dplyr::filter(type == "exon"),ggplot2::aes(xmin = start, xmax = end, ymin = 0, ymax = trackHeight/4)) +
+        ggplot2::geom_rect(alpha=0.8,fill = "green", data = cgi, ggplot2::aes(xmin = start, xmax = end, ymin = 0, ymax = trackHeight/4)) +
+        ggplot2::geom_segment(data = ref, color="gray",
+                            aes(x = ifelse(strand == "+", (min(start) - arrowOverhang), (max(end)) + arrowOverhang),
+                            y = trackHeight/8,
+                            xend = ifelse(strand == "+", (max(end) + arrowOverhang), (min(start)) - arrowOverhang),
+                            yend = trackHeight/8), arrow = arrow(length = unit(trackHeight/40, "cm"))) + 
+                            labs(title=paste(genes[i]),subtitle=paste(toplot$chr[1],toplot$start[1],"-",toplot$end[nrow(toplot)]),size=3) +
+                            theme(axis.title.x = element_blank(),
+                            axis.ticks.y = element_blank(),
+                            axis.title.y = element_blank(),
+                            axis.text.y = element_blank(),
+                            panel.grid.major = element_blank(),
+                            panel.grid.minor = element_blank(),
+                            panel.border = element_blank(),
+                            panel.background = element_blank(),
+                            title=element_text(size=4))+
+                            theme(legend.position="none") +xlim(c(xmin_pos,xmax_pos))
+    ggsave(wrap_plots(p[[i]])+plot_layout(ncol=1),file=paste(prefix,genes[i],"hypoM.pdf",sep="."),limitsize=F,height=10)
+    }
+}
 
-#   p <- vector("list", length(genes)) # empty plot list
-#   for (i in 1:length(genes)) {
-#     ref <- obj@ref |> dplyr::filter(gene_name == genes[i])
-#     aggregated <- obj@genomeMatrices[[matrix]]
+#hypoM(obj=obj,genes=c("KIT","COL1A1","ESR1"),prefix="hbca_dcis.celltype")
 
-#     toplot <- aggregated[c((aggregated$chr == ref$seqid[ref$type == "gene"] &
-#                               aggregated$start > (ref$start[ref$type == "gene"] - trackOverhang) &
-#                               aggregated$end < (ref$end[ref$type == "gene"] + trackOverhang))), ]
-#     ngroups <- ncol(toplot) - 3
-#     trackHeight <- ngroups * trackScale
-#     toplot <- tidyr::pivot_longer(toplot, cols = c(4:ncol(toplot)), names_to = "group", values_to = "pct_m") |> dplyr::rowwise() |> dplyr::mutate(middle = mean(c(start, end), na.rm = TRUE))
-#     if (removeNA) {
-#       toplot <- toplot |> dplyr::filter(!is.na(pct_m))
-#     }
-#     if (invert_met){
-#       toplot$pct_m<-toplot$pct_m-100
-#       colorMax=-100
-#     }
-#     #initialize first row
-#     p[[i]] <- vector("list", length(colors)) # empty plot list
-    
-#     for (j in names(colors)){
-#     toplot_sub<-toplot[toplot$group==j,]
-#     p[[i]][[j]] <- ggplot2::ggplot() + 
-#       ggplot2::geom_col(data = toplot_sub, ggplot2::aes(x = middle, y = pct_m, fill = pct_m), width = width) + 
-#       scale_fill_gradient2(high="black",mid="grey",low=colors[j],midpoint=-60) + 
-#       theme_void() +
-#       theme(legend.position="none") + ylab(j)
-#     if(j==names(colors)[1]){
-#     p[[i]][[j]] <- p[[i]][[j]] + 
-#       ggplot2::geom_rect(fill = "pink", data = ref |> dplyr::filter(type == "gene") |>
-#                           dplyr::mutate(promoter_start = ifelse(strand == "+", (start - 1500), (end + 1500)),
-#                           promoter_end = ifelse(strand == "+", (promoter_start+3000), (promoter_start-3000))),
-#                           ggplot2::aes(xmin = promoter_start, xmax = promoter_end, ymin = trackHeight*3, ymax = trackHeight)) +
-#       ggplot2::geom_rect(fill = "black", data = ref |> dplyr::filter(type == "exon"),
-#                          ggplot2::aes(xmin = start, xmax = end, ymin = trackHeight*3, ymax = trackHeight)) +
-#       ggplot2::geom_segment(data = ref, aes(x = ifelse(strand == "+", (min(start) - arrowOverhang), (max(end)) + arrowOverhang),
-#                           y = (trackHeight*1.5),
-#                           xend = ifelse(strand == "+", (max(end) + arrowOverhang), (min(start)) - arrowOverhang),
-#                           yend = (trackHeight*1.5)), arrow = arrow(length = unit(trackHeight/40, "cm"))) + 
-#                           xlab(paste(genes[i],toplot$chr[1],toplot$start[1],"-",toplot$end[nrow(toplot)])) +
-#                           theme_void() + theme(legend.position="none")
-#       p[[i]][[j]] <- p[[i]][[j]]+ 
-#       ggplot2::scale_fill_gradientn(colors = rev(pal), limits = c(colorMax,0)) + 
-#       theme(axis.title.y = element_blank(),axis.text.y=element_blank()) +
-#       ggplot2::theme(panel.background = element_blank(), axis.ticks = element_blank()) + ylab(j) + ggtitle(genes[i]) + theme(axis.title.y = element_blank(),axis.text.y=element_blank(),legend.position="none")
-#   }
-#   if(j==last(names(colors))){
-#     p[[i]][[j]] <- p[[i]][[j]] + theme_void() + theme(axis.title.y = element_blank(),axis.text.y=element_blank(),legend.position="none")
-#  #to put genome location
-#   }
-# }
-#   ggsave(gridExtra::grid.arrange(grobs = p[[i]], ncol = ncol),file="test.pdf",limitsize=F,height=10)
-
-# }
-# }

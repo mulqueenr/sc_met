@@ -51,17 +51,21 @@ adata_final,stat_out=methyltree.analysis.comprehensive_lineage_analysis(
                                                         # remove cell-type specific DNA methylation signals
                                                         remove_celltype_signal=True,cell_type_key='celltype',
                                                         # optimize the lineage tree
-                                                        optimize_tree=True,optimize_background_cutoff=0.4,
+                                                        optimize_tree=True,optimize_background_cutoff=0.8,
                                                         # better heatmap visualization
-                                                        heatmap_vmax_percentile=99.9,heatmap_vmin_percentile=60,heatmap_figsize=(10, 9.5),heatmap_show_label=True,
-                                                        heatmap_show_legend=True,heatmap_fontsize=5,
+                                                        heatmap_vmax_percentile=99,heatmap_vmin_percentile=70,heatmap_figsize=(10, 9.5),heatmap_show_label=True,
+                                                        heatmap_show_legend=True,heatmap_fontsize=2,
                                                         # related to saving figures
                                                         fig_dir=figure_path,data_des=data_des,
                                                         # coarse-graining
                                                         perform_coarse_graining=False,#coarse_grain_figsize=(6, 5),
                                                         # infer the clones based on similarity cutoff
-                                                        #perform_clone_inference=True,clone_inference_threshold=0.6,clone_inference_print=True,
+                                                        #perform_clone_inference=True,clone_inference_threshold=0.8,clone_inference_print=True,
                                                         perform_memory_analysis=True, save_adata=True,perform_depth_analysis=True,)
+
+methyltree.plotting.plot_similarity_heatmap_with_multiple_colorbars(adata_final,save_name="test.svg",additional_key_list=['celltype'],heatmap_vmax_percentile=99.9,heatmap_vmin_percentile=80,)
+fig = plt1.get_figure()
+plt1.savefig("out.png") 
 
 methyltree.lineage.bootstrap_lineage_tree(adata_final,out_dir,
     save_data_des,

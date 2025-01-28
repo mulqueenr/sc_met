@@ -225,142 +225,24 @@ methyltree_output(obj=obj,prefix="IDC_DCIS-79T",sample=c("IDC-79T","DCIS-79T"),f
 
 ```
 
+# Methyltree run for clonal analysis
 
-# Meme suite
-# Want FIMO or AME i think
-# DMRs (small peaks) per clsuter
-# get_sequence()
-# AME or STREME/XSTREME
-# Hypergeo test?
+```bash
+singularity shell \
+--bind ~/projects/ \
+--bind /volumes/seq/projects/metACT \
+~/projects/metact/src/amethyst.sif
+source activate base
+conda activate MethylTree
 
-```R
-source("/volumes/USR2/Ryan/projects/metact/src/amethyst_custom_functions.R") #this loads all necessary R packages and custom functions
-
-options(future.globals.maxSize = 20000 * 1024^2) #set parallelization max size to 20GB
-
-setwd("/volumes/USR2/Ryan/projects/metact/amethyst_processing") #set wd
-obj<-readRDS(file="dcis_hbca.celltypepeaks.amethyst.rds")
-threads=50
-prefix="allcells"
-
-#chromvar preparation for all cells
-chromvar_met_per_cell<-function(obj,stepsize=500,threads=50,percent_cell_coverage=2.5){
-  #run window scoring for all cells
-  chromvar_windows <- makeWindows(obj,
-                                  stepsize = stepsize, 
-                                  type = "CG", 
-                                  metric = "score", 
-                                  threads = threads, 
-                                  index = "chr_cg", 
-                                  nmin = 2) 
-  #binarized based on hypomethylation score (1 for hypo, 0 for hyper)
-  counts<-ifelse(chromvar_windows<0.25,1,0) #score ranges from -1 to 1, using 0.25 for cutoff
-  #require 2.5% cell coverage for windows, this is kinda on par with ATAC data, kinda an arbitrary cutoff. but mostly to decrease computational time on which windows we scan for motifs (5% is 10k window, 2% is 909k windows)
-  counts<-counts[rowSums(!is.na(counts))>=(ncol(counts)/100)*percent_cell_coverage,] 
-  counts[is.na(counts)]<-0
-  #remove purely hypermethylated windows
-  counts<-counts[rowSums(counts)>1,] 
-  #dim(counts)
-  return(counts)}
-
-
-#run on the cluster level for less coverage noise
-chromvar_met_per_cluster<-function(obj,stepsize=500,threads=50,mincov=2,percent_cell_coverage=5,groupBy="cluster_id"){
-  #run window scoring for all cells
-  clusterwindows <- calcSmoothedWindows(obj, 
-              type = "CG", 
-              threads = threads,
-              step = 500,
-              smooth = 1,
-              index = "chr_cg",
-              groupBy = groupBy, 
-              returnSumMatrix = TRUE, 
-              returnPctMatrix = TRUE)
-  cov_mat<-clusterwindows[["sum_matrix"]]
-  cov_mat<-cov_mat[,grepl(colnames(cov_mat,pattern="_t$"))]
-  pct_mat<-clusterwindows[["pct_matrix"]]
-  pct_mat[cov_mat<=min_cov]<-NA
-  #binarized based on hypomethylation score (1 for hypo, 0 for hyper)
-  counts<-ifelse(chromvar_windows<0.25,1,0) #score ranges from -1 to 1, using 0.25 for cutoff
-  #require 2.5% cell coverage for windows, this is kinda on par with ATAC data, kinda an arbitrary cutoff. but mostly to decrease computational time on which windows we scan for motifs (5% is 10k window, 2% is 909k windows)
-  counts<-counts[rowSums(!is.na(counts))>=(ncol(counts)/100)*percent_cell_coverage,] 
-  counts[is.na(counts)]<-0
-  #remove purely hypermethylated windows
-  counts<-counts[rowSums(counts)>1,] 
-  #dim(counts)
-  return(counts)}
-
-  chromvar_methylation<-function(obj,counts,prefix="allcells",threads){
-    #prepare summarized experiment for chromvar
-    peaks<-GenomicRanges::makeGRangesFromDataFrame(data.frame(
-      seqnames=unlist(lapply(strsplit(row.names(counts),"_"),"[",1)),
-      start=unlist(lapply(strsplit(row.names(counts),"_"),"[",2)),
-      end=unlist(lapply(strsplit(row.names(counts),"_"),"[",3))))
-
-    #prepare motifs
-    opts <- list()
-    opts[["species"]] <- "Homo sapiens"
-    opts[["collection"]] <- "CORE"
-    opts[["all_versions"]] <- FALSE
-    motifs <- getMatrixSet(JASPAR2020,opts)
-
-  #split peaks evenly into chunks so we can multicore the motif scanning
-  motif_matches<-mclapply(split(peaks,  cut(seq_along(peaks), threads, labels = FALSE)),
-                          function(x){
-                          matchMotifs(motifs, x, genome = BSgenome.Hsapiens.UCSC.hg38, p.cutoff=0.01)},
-                          mc.cores=threads)
-  motif_ix<-do.call("rbind",motif_matches)
-
-  #create summarized experiment
-  rse <- SummarizedExperiment::SummarizedExperiment(
-                                  assays=list(counts=as(counts, "sparseMatrix")),
-                                  rowRanges=peaks)
-  colData(rse)<-as(obj@metadata[colnames(counts),],"DataFrame")
-  rse <- addGCBias(rse, genome = BSgenome.Hsapiens.UCSC.hg38)
-  dev <- computeDeviations(object = rse, annotations = motif_ix)
-  saveRDS(dev,file=paste0(prefix,".chromvar.rds"))
-  dev<-readRDS(file=paste0(prefix,".chromvar.rds"))
-
-  #calculate variability
-  variability <- computeVariability(dev)
-  ggsave(plotVariability(variability, use_plotly = FALSE),file="chromvar_variability.pdf")
-
-  #Differential motif analysis
-  diff_acc <- differentialDeviations(dev, "cluster_id")
-  diff_var <- differentialVariability(dev, "cluster_id")
-
-  #differential tfbs by highest variability
-  diff_tfbs<-row.names(variability[variability$variability>0.3,])
-  devs<-deviations(dev)
-  devs[is.na(devs)]<-0 #fill in NA for dev scores
-  #dim_out<-irlba::irlba(devs[diff_tfbs,], 30)
-  dim_out<-t(devs[diff_tfbs,])
-  dim<-uwot::umap(dim_out)
-  dim<-as.data.frame(dim)
-  colnames(dim)<-c("chromvar_umap_x","chromvar_umap_y")
-  row.names(dim)<-colnames(devscores)
-  dim$cluster_id<-obj@metadata[row.names(dim),]$cluster_id
-  plt<-ggplot(dim,aes(x=chromvar_umap_x,y=chromvar_umap_y,color=cluster_id))+geom_point()+theme_minimal()
-  ggsave(plt,file=paste0(prefix,".chromvar_umap.pdf"))
-
-  sample_cor <- getSampleCorrelation(dev,threshold=0.3)
-  sample_cor[is.na(sample_cor)]<-0 #fill in na as 0 for sites with no overlap
-  plt<-pheatmap(as.dist(sample_cor), 
-          annotation_row = as.data.frame(colData(dev)[c("cluster_id","sample")]),
-          clustering_distance_rows = as.dist(1-sample_cor), 
-          clustering_distance_cols = as.dist(1-sample_cor))
-  ggsave(plt,file=paste0(prefix,".chromvar_motifs.heatmap.pdf"))
-  saveRDS(dev,file=paste0(prefix,".chromvar.rds"))
-}
-
-
-
-
-#compute synergy between motifs
-#getAnnotationSynergy(rse, motif_ix[,c(83,24,20)])
-
+cd /volumes/USR2/Ryan/projects/metact/amethyst_processing
+python ~/projects/metact/src/methyltree_subclones.py -i DCIS-41T
+python ~/projects/metact/src/methyltree_subclones.py -i DCIS-66T
+python ~/projects/metact/src/methyltree_subclones.py -i IDC_DCIS-79T
 
 ```
+
+
 # Published ATAC peaks
 # running window clustering now
 ```R
@@ -416,6 +298,27 @@ bigwig_output(obj=obj,tracks="cg_cluster_id_tracks")
 saveRDS(obj,file="dcis_hbca.celltypepeaks.amethyst.rds")
 
 obj<-readRDS(file="dcis_hbca.celltypepeaks.amethyst.rds")
+
+#cell type assignment from bigwigs
+celltypes<-setNames(nm=as.character(1:15),c("LumHRCancer_4","Fibro","LumHRNormal","Tcell_3","Myeloid","Basal_1","Endo","LumSec_2","Tcell_1","LumHRCancer_2","LumHRCancer_1","LumSec_1","Basal_2","LumHRCancer_3","Tcell_2"))
+obj@metadata$celltype<-celltypes[obj@metadata$cluster_id]
+saveRDS(obj,file="dcis_hbca.celltypepeaks.amethyst.rds")
+
+cluster1kbwindows <- calcSmoothedWindows(obj, 
+                                        type = "CG", 
+                                        threads = 300,
+                                        step = 500,
+                                        smooth = 3,
+                                        index = "chr_cg",
+                                        groupBy = "celltype", 
+                                        returnSumMatrix = TRUE, # save sum matrix for DMR analysis
+                                        returnPctMatrix = TRUE)
+
+obj@genomeMatrices[[paste0("cg_",groupBy,"_tracks")]] <- cluster1kbwindows[["pct_matrix"]]
+saveRDS(obj,file="dcis_hbca.celltypepeaks.amethyst.rds")
+
+plt<-histograM(obj,gene="COL1A1",matrix=paste0("cg_",groupBy,"_tracks"))
+ggsave(plt,file="test_met_cov.pdf")
 celltypes<-unique(unlist(lapply(strsplit(celltype_bed_reduced$celltype,","),"[")))
 
 avg_met_list<-mclapply(celltypes,function(i){
@@ -445,34 +348,35 @@ plt_list<-lapply(paste0(celltypes,"_avgpeakmet"),function(i){
 plt<-patchwork::wrap_plots(plt_list)
 ggsave(plt,file="avg_methylation.pdf",width=30,height=30)
 
-
-
 #Methylation average over cell type peaks for plotting?
 
 ```
-# TO DO: CELL TYPING BY PEAK CALLING (JUST MAKE A PEAK OVERLAP METRIC OR SOMETHING)  (AVG methylation over peakssets?)
-# CHROMVAR RERUN ON ALL CELLS
-
-# TO DO: ADD MEME SCANNING TO DMRS USING JASPAR 2024 MOTIFS
 
 
+# Chromvar motif analysis
 
-```bash
-singularity shell \
---bind ~/projects/ \
---bind /volumes/seq/projects/metACT \
-~/projects/metact/src/amethyst.sif
-source activate base
-conda activate MethylTree
+```R
+source("/volumes/USR2/Ryan/projects/metact/src/amethyst_custom_functions.R") #this loads all necessary R packages and custom functions
 
-cd /volumes/USR2/Ryan/projects/metact/amethyst_processing
-python ~/projects/metact/src/methyltree_subclones.py -i DCIS-41T
-python ~/projects/metact/src/methyltree_subclones.py -i DCIS-66T
-python ~/projects/metact/src/methyltree_subclones.py -i IDC_DCIS-79T
+options(future.globals.maxSize = 20000 * 1024^2) #set parallelization max size to 20GB
 
-```
+setwd("/volumes/USR2/Ryan/projects/metact/amethyst_processing") #set wd
+obj<-readRDS(file="dcis_hbca.celltypepeaks.amethyst.rds")
+threads=50
+prefix="allcells"
 
-```python
+#run per cell
+counts<-chromvar_met_per_cell(obj,stepsize=500,threads=50,percent_cell_coverage=2.5)
+chromvar_methylation(obj=obj,counts=counts,prefix="allcells_cells",threads=50)
+
+#run on the cluster level for less coverage noise
+counts<-chromvar_met_per_cluster(obj,stepsize=500,threads=50,mincov=30,percent_cell_coverage=50,groupBy="cluster_id")
+chromvar_methylation(obj=obj,counts=counts,prefix="allcells_cluster",threads=50)
+
+dcis<-subsetObject(obj, cells=row.names(obj@metadata[startsWith(toupper(obj@metadata$sample),prefix="DCIS-41T"),]))
+counts<-chromvar_met_per_cluster(dcis,stepsize=500,threads=100,mincov=2,percent_cell_coverage=50,groupBy="subclones")
+#run chromvar on just dcis-41t
+chromvar_methylation(obj=obj,counts=counts,prefix="allcells_cluster",threads=50)
 
 ```
 
